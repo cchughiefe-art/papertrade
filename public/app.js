@@ -146,25 +146,81 @@ function chainName(id) {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    WALLET
 ========================= */
 
 async function refreshWallet() {
   try {
-    const w = await api("/api/wallet");
-    const sol = await api("/api/sol-price");
-    $("wCash").textContent = fmtUsd(w.cash);
-    $("wPositions").textContent = fmtUsd(w.openPositionsValue) + (w.allPricesKnown ? "" : "*");
-    $("wEquity").textContent = fmtUsd(w.equity) + (w.allPricesKnown ? "" : "*");
-    const tp = $("wPnl");
-    tp.textContent = signedUsd(w.totalPnl);
-    tp.className = "val " + pnlClass(w.totalPnl);
-    if (sol && sol.priceUsd > 0 && $("wSol")) {
-      const solAmount = w.equity / sol.priceUsd;
-      $("wSol").textContent = solAmount.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 }) + " SOL";
+    const data = await api("/api/wallet");
+    const w = data.wallet || data;
+
+    if ($("wCash")) $("wCash").textContent = fmtUsd(w.cashUsd);
+    if ($("wPositions")) $("wPositions").textContent = fmtUsd(w.positionValueUsd);
+    if ($("wEquity")) $("wEquity").textContent = fmtUsd(w.equityUsd);
+
+    if ($("wRealized")) $("wRealized").textContent = signedUsd(w.totalPnlUsd);
+    if ($("wUnrealized")) $("wUnrealized").textContent = "$0.00";
+
+    if ($("solValue")) {
+      $("solValue").textContent = w.equitySol != null
+        ? Number(w.equitySol).toFixed(6) + " SOL"
+        : "—";
     }
-    $("pnlDetail").textContent = `Realized: ${signedUsd(w.realizedPnl)} · Unrealized: ${signedUsd(w.unrealizedPnl)}` + (w.allPricesKnown ? "" : " · * some prices stale");
-  } catch { }
+  } catch (e) {
+    console.error("Wallet refresh failed:", e);
+  }
 }
 
 async function loadToken() {
@@ -231,6 +287,58 @@ function renderChainChooser(tokens) {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    TOKEN DISPLAY
 ========================= */
 
@@ -294,6 +402,58 @@ function showToken(t) {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    LIVE TOKEN PRICE
 ========================= */
 
@@ -348,6 +508,58 @@ function markStale(t) {
     fmtPrice(t.priceUsd);
 }
 
+
+/* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
 
 /* =========================
    BUY
@@ -408,6 +620,58 @@ async function buy() {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    SELL
 ========================= */
 
@@ -437,6 +701,58 @@ async function sell(positionId) {
   }
 }
 
+
+/* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
 
 /* =========================
    POSITIONS
@@ -578,6 +894,58 @@ async function refreshPositions() {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    TRADE HISTORY
 ========================= */
 
@@ -665,6 +1033,58 @@ async function refreshTrades() {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    DEPOSIT / WITHDRAW
 ========================= */
 
@@ -728,6 +1148,58 @@ async function withdraw() {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    COPY ADDRESS
 ========================= */
 
@@ -755,6 +1227,58 @@ async function copyAddress() {
   }
 }
 
+
+/* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
 
 /* =========================
    RESET
@@ -796,6 +1320,58 @@ async function reset() {
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    POLLING
 ========================= */
 
@@ -805,6 +1381,58 @@ async function pollPrices() {
   await refreshWallet();
 }
 
+
+/* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
 
 /* =========================
    EVENTS
@@ -833,6 +1461,58 @@ $('resetBtn').onclick = reset;
 
 
 /* =========================
+   ACCOUNT ACTIONS
+========================= */
+
+async function changeBalance(type) {
+  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
+  const value = prompt(label);
+
+  if (value === null) return;
+
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Enter a valid amount.");
+    return;
+  }
+
+  try {
+    await api("/api/" + type, {
+      method: "POST",
+      body: JSON.stringify({ amountUsd: amount })
+    });
+
+    await refreshWallet();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function resetAccount() {
+  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+
+  try {
+    await api("/api/reset", { method: "POST" });
+    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function copyAddress() {
+  if (!currentToken) return;
+
+  try {
+    await navigator.clipboard.writeText(currentToken.address);
+    $("copyAddressBtn").textContent = "COPIED";
+    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
+  } catch (_) {
+    alert(currentToken.address);
+  }
+}
+
+/* =========================
    INITIAL LOAD
 ========================= */
 
@@ -844,3 +1524,43 @@ setInterval(
   pollPrices,
   POLL_MS
 );
+
+if ($('depositBtn')) {
+  $('depositBtn').onclick = () => changeBalance('deposit');
+}
+
+if ($('withdrawBtn')) {
+  $('withdrawBtn').onclick = () => changeBalance('withdraw');
+}
+
+if ($('resetBtn')) {
+  $('resetBtn').onclick = resetAccount;
+}
+
+if ($('copyAddressBtn')) {
+  $('copyAddressBtn').onclick = copyAddress;
+}
+
+if ($('loadBtn')) {
+  $('loadBtn').onclick = loadToken;
+}
+
+if ($('tokenInput')) {
+  $('tokenInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') loadToken();
+  });
+}
+
+if ($('buyBtn')) {
+  $('buyBtn').onclick = buy;
+}
+
+refreshWallet();
+refreshPositions();
+refreshTrades();
+
+setInterval(async () => {
+  await refreshWallet();
+  await refreshPositions();
+  await refreshCurrentToken();
+}, POLL_MS);

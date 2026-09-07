@@ -7,9 +7,7 @@ const {
   getSolPrice
 } = require('./src/providers');
 
-const {
-  isValidAddress
-} = require('./src/chains');
+const { isValidAddress } = require('./src/chains');
 
 const {
   walletSummary,
@@ -25,11 +23,10 @@ const {
 } = require('./src/trading/engine');
 
 const app = express();
+const PORT = process.env.PORT || 10000;
 
 app.use(express.json({ limit: '100kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-
-const PORT = process.env.PORT || 10000;
 
 function sessionId(req) {
   return String(
@@ -46,6 +43,7 @@ function sendError(res, error) {
     /not found/i.test(message) ? 404 :
     /insufficient/i.test(message) ? 400 :
     /invalid/i.test(message) ? 400 :
+    /amount/i.test(message) ? 400 :
     500;
 
   res.status(status).json({
@@ -54,6 +52,8 @@ function sendError(res, error) {
   });
 }
 
+/* TOKEN SEARCH */
+
 app.get('/api/token/resolve/:address', async (req, res) => {
   try {
     const address = req.params.address.trim();
@@ -61,7 +61,7 @@ app.get('/api/token/resolve/:address', async (req, res) => {
     if (!isValidAddress(address).length) {
       return res.status(400).json({
         ok: false,
-        error: 'Invalid token address or mint'
+        error: 'Invalid token address or Solana mint'
       });
     }
 
@@ -82,6 +82,8 @@ app.get('/api/token/resolve/:address', async (req, res) => {
     sendError(res, error);
   }
 });
+
+/* TOKEN DATA */
 
 app.get('/api/token/:chain/:address', async (req, res) => {
   try {
@@ -112,6 +114,8 @@ app.get('/api/token/:chain/:address', async (req, res) => {
   }
 });
 
+/* TOKEN PRICE */
+
 app.get('/api/price/:chain/:address', async (req, res) => {
   try {
     const { chain, address } = req.params;
@@ -133,6 +137,24 @@ app.get('/api/price/:chain/:address', async (req, res) => {
     sendError(res, error);
   }
 });
+
+/* SOL PRICE */
+
+app.get('/api/sol-price', async (req, res) => {
+  try {
+    const priceUsd = await getSolPrice();
+
+    res.json({
+      ok: true,
+      priceUsd,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+/* WALLET */
 
 app.get('/api/wallet', async (req, res) => {
   try {
@@ -156,16 +178,71 @@ app.get('/api/wallet', async (req, res) => {
   }
 });
 
-app.get('/api/positions', (req, res) => {
+/* POSITIONS */
+
+app.get('/api/positions', async (req, res) => {
   try {
+    const positions = getPositions(sessionId(req));
+
+    const enriched = await Promise.all(
+      positions.map(async p => {
+        try {
+          const price = await getPrice(
+            p.chain,
+            p.tokenAddress
+          );
+
+          const currentPriceUsd =
+            price?.priceUsd != null
+              ? Number(price.priceUsd)
+              : null;
+
+          const currentValueUsd =
+            currentPriceUsd != null
+              ? p.quantity * currentPriceUsd
+              : null;
+
+          const unrealizedPnlUsd =
+            currentValueUsd != null
+              ? currentValueUsd - p.investedUsd
+              : null;
+
+          const unrealizedPnlPct =
+            unrealizedPnlUsd != null && p.investedUsd
+              ? (unrealizedPnlUsd / p.investedUsd) * 100
+              : null;
+
+          return {
+            ...p,
+            currentPriceUsd,
+            currentValueUsd,
+            unrealizedPnlUsd,
+            unrealizedPnlPct,
+            priceUpdatedAt: price?.updatedAt || null
+          };
+        } catch (_) {
+          return {
+            ...p,
+            currentPriceUsd: null,
+            currentValueUsd: null,
+            unrealizedPnlUsd: null,
+            unrealizedPnlPct: null,
+            priceUpdatedAt: null
+          };
+        }
+      })
+    );
+
     res.json({
       ok: true,
-      positions: getPositions(sessionId(req))
+      positions: enriched
     });
   } catch (error) {
     sendError(res, error);
   }
 });
+
+/* TRADES */
 
 app.get('/api/trades', (req, res) => {
   try {
@@ -178,6 +255,8 @@ app.get('/api/trades', (req, res) => {
   }
 });
 
+/* BALANCE HISTORY */
+
 app.get('/api/balance-history', (req, res) => {
   try {
     res.json({
@@ -189,37 +268,49 @@ app.get('/api/balance-history', (req, res) => {
   }
 });
 
+/* DEPOSIT */
+
 app.post('/api/deposit', (req, res) => {
   try {
     const wallet = deposit(
       sessionId(req),
-      req.body.amountUsd
+      req.body?.amountUsd
     );
 
     res.json({
       ok: true,
-      wallet
+      wallet: walletSummary(
+        sessionId(req),
+        null
+      )
     });
   } catch (error) {
     sendError(res, error);
   }
 });
+
+/* WITHDRAW */
 
 app.post('/api/withdraw', (req, res) => {
   try {
     const wallet = withdraw(
       sessionId(req),
-      req.body.amountUsd
+      req.body?.amountUsd
     );
 
     res.json({
       ok: true,
-      wallet
+      wallet: walletSummary(
+        sessionId(req),
+        null
+      )
     });
   } catch (error) {
     sendError(res, error);
   }
 });
+
+/* BUY */
 
 app.post('/api/buy', async (req, res) => {
   try {
@@ -227,16 +318,32 @@ app.post('/api/buy', async (req, res) => {
       chain,
       address,
       amountUsd
-    } = req.body;
+    } = req.body || {};
 
-    if (!chain || !address || !isValidAddress(address).includes(chain)) {
+    if (
+      !chain ||
+      !address ||
+      !isValidAddress(address).includes(chain)
+    ) {
       return res.status(400).json({
         ok: false,
         error: 'Invalid chain or token address'
       });
     }
 
-    const token = await getPrice(chain, address);
+    const amount = Number(amountUsd);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Enter a valid investment amount'
+      });
+    }
+
+    const token = await getPrice(
+      chain,
+      address
+    );
 
     if (!token || !Number(token.priceUsd)) {
       return res.status(404).json({
@@ -245,18 +352,23 @@ app.post('/api/buy', async (req, res) => {
       });
     }
 
-    const wallet = buy(sessionId(req), {
+    buy(sessionId(req), {
       chain,
       address,
-      amountUsd,
+      amountUsd: amount,
       priceUsd: token.priceUsd,
       tokenName: token.name,
       symbol: token.symbol
     });
 
+    const solPrice = await getSolPrice().catch(() => null);
+
     res.json({
       ok: true,
-      wallet,
+      wallet: walletSummary(
+        sessionId(req),
+        solPrice
+      ),
       token
     });
   } catch (error) {
@@ -264,11 +376,13 @@ app.post('/api/buy', async (req, res) => {
   }
 });
 
+/* SELL */
+
 app.post('/api/sell', async (req, res) => {
   try {
     const position = getPosition(
       sessionId(req),
-      req.body.positionId
+      req.body?.positionId
     );
 
     if (!position) {
@@ -296,15 +410,23 @@ app.post('/api/sell', async (req, res) => {
       token.priceUsd
     );
 
+    const solPrice = await getSolPrice().catch(() => null);
+
     res.json({
       ok: true,
       ...result,
+      wallet: walletSummary(
+        sessionId(req),
+        solPrice
+      ),
       token
     });
   } catch (error) {
     sendError(res, error);
   }
 });
+
+/* RESET */
 
 app.post('/api/reset', (req, res) => {
   try {
@@ -319,6 +441,8 @@ app.post('/api/reset', (req, res) => {
   }
 });
 
+/* FRONTEND */
+
 app.get('*', (req, res) => {
   res.sendFile(
     path.join(__dirname, 'public', 'index.html')
@@ -326,5 +450,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`PaperTrade running on port ${PORT}`);
+  console.log(
+    `PaperTrade running on port ${PORT}`
+  );
 });
