@@ -1,190 +1,382 @@
-const sessionKey = 'papertrade_session';
+const $ = id => document.getElementById(id);
 
-let sessionId = localStorage.getItem(sessionKey);
+const POLL_MS = 7000;
+
+let sessionId = localStorage.getItem('pt_session');
 
 if (!sessionId) {
-  sessionId =
-    crypto.randomUUID?.() ||
-    `${Date.now()}-${Math.random()}`;
+  sessionId = (crypto.randomUUID ? crypto.randomUUID() : 's' + Date.now() + Math.random().toString(36).slice(2))
+    .replace(/-/g, '');
 
-  localStorage.setItem(sessionKey, sessionId);
+  localStorage.setItem('pt_session', sessionId);
 }
 
 let currentToken = null;
+let lastPriceUpdate = {};
 
-const $ = id => document.getElementById(id);
-
-function money(value) {
-  const n = Number(value || 0);
-
-  return n.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2
-  });
-}
-
-function number(value) {
-  return Number(value || 0).toLocaleString('en-US', {
-    maximumFractionDigits: 8
-  });
-}
-
-function shortAddress(address) {
-  if (!address) return '';
-
-  if (address.length <= 18) return address;
-
-  return `${address.slice(0, 9)}...${address.slice(-9)}`;
-}
-
-async function api(url, options = {}) {
-  const headers = {
-    ...(options.headers || {}),
-    'X-Session-Id': sessionId,
-    'Content-Type': 'application/json'
-  };
-
-  const response = await fetch(url, {
-    ...options,
-    headers
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-Id': sessionId,
+      ...(opts.headers || {})
+    }
   });
 
-  const data = await response.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({}));
 
-  if (!response.ok || data.ok === false) {
-    throw new Error(data.error || 'Request failed');
+  if (!res.ok) {
+    throw new Error(data.error || `HTTP ${res.status}`);
   }
 
   return data;
 }
 
-function showError(message) {
-  $('tokenError').textContent = message || '';
+function fmtUsd(n, dec = 2) {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+
+  return '$' + Number(n).toLocaleString('en-US', {
+    minimumFractionDigits: dec,
+    maximumFractionDigits: dec
+  });
 }
+
+function fmtPrice(p) {
+  if (p == null || !Number.isFinite(Number(p))) return '—';
+
+  p = Number(p);
+
+  if (p >= 1) return fmtUsd(p, 2);
+  if (p >= 0.01) return '$' + p.toFixed(4);
+
+  return '$' + Number(p.toPrecision(4)).toString();
+}
+
+function fmtCompact(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+
+  return '$' + Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1
+  }).format(Number(n));
+}
+
+function fmtQty(q) {
+  if (q == null) return '—';
+
+  return Number(q).toLocaleString('en-US', {
+    maximumFractionDigits: 8
+  });
+}
+
+function fmtPct(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+
+  n = Number(n);
+
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+}
+
+function pnlClass(n) {
+  n = Number(n);
+
+  if (n > 0) return 'green';
+  if (n < 0) return 'red';
+
+  return '';
+}
+
+function signedUsd(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+
+  n = Number(n);
+
+  return (n >= 0 ? '+$' : '-$') +
+    Math.abs(n).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+}
+
+function timeAgo(ts) {
+  if (!ts) return '—';
+
+  const seconds = Math.max(
+    0,
+    Math.floor(Date.now() / 1000) - Number(ts)
+  );
+
+  if (seconds < 60) return `${seconds}s ago`;
+
+  const minutes = Math.floor(seconds / 60);
+
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+
+  return `${hours}h ago`;
+}
+
+function hide(id) {
+  $(id).classList.add('hidden');
+}
+
+function show(id) {
+  $(id).classList.remove('hidden');
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s ?? '');
+  return d.innerHTML;
+}
+
+function chainName(id) {
+  return {
+    solana: 'Solana',
+    ethereum: 'Ethereum',
+    base: 'Base',
+    bsc: 'BNB Chain',
+    arbitrum: 'Arbitrum',
+    polygon: 'Polygon',
+    avalanche: 'Avalanche'
+  }[id] || id;
+}
+
+
+/* =========================
+   WALLET
+========================= */
 
 async function refreshWallet() {
-  const data = await api('/api/wallet');
-  const wallet = data.wallet;
-
-  $('cash').textContent = money(wallet.cashUsd);
-  $('cashSol').textContent =
-    wallet.cashSol == null
-      ? 'SOL unavailable'
-      : `${number(wallet.cashSol)} SOL`;
-
-  $('positionValue').textContent =
-    money(wallet.positionValueUsd);
-
-  $('equity').textContent =
-    money(wallet.equityUsd);
-
-  $('equitySol').textContent =
-    wallet.equitySol == null
-      ? 'SOL unavailable'
-      : `${number(wallet.equitySol)} SOL`;
-
-  $('pnl').textContent =
-    money(wallet.totalPnlUsd);
-
-  $('solPrice').textContent =
-    wallet.priceUsd == null
-      ? 'Unavailable'
-      : money(wallet.priceUsd);
-}
-
-function showToken(token) {
-  currentToken = token;
-
-  $('tokenCard').classList.remove('hidden');
-
-  $('tokenName').textContent =
-    token.name || 'Unknown Token';
-
-  $('tokenSymbol').textContent =
-    token.symbol
-      ? `$${token.symbol}`
-      : 'UNKNOWN';
-
-  $('tokenSource').textContent =
-    token.source ||
-    token.dex ||
-    'Market';
-
-  $('tokenPrice').textContent =
-    Number(token.priceUsd) > 0
-      ? money(token.priceUsd)
-      : 'Price unavailable';
-
-  $('tokenChange').textContent =
-    `${Number(token.priceChange24h || 0).toFixed(2)}%`;
-
-  $('tokenMarketCap').textContent =
-    money(token.marketCapUsd);
-
-  $('tokenLiquidity').textContent =
-    money(token.liquidityUsd);
-
-  $('tokenVolume').textContent =
-    money(token.volume24hUsd);
-
-  $('tokenChain').textContent =
-    token.chain || 'Unknown';
-
-  $('tokenAddress').textContent =
-    token.address || '';
+  try {
+    const w = await api("/api/wallet");
+    const sol = await api("/api/sol-price");
+    $("wCash").textContent = fmtUsd(w.cash);
+    $("wPositions").textContent = fmtUsd(w.openPositionsValue) + (w.allPricesKnown ? "" : "*");
+    $("wEquity").textContent = fmtUsd(w.equity) + (w.allPricesKnown ? "" : "*");
+    const tp = $("wPnl");
+    tp.textContent = signedUsd(w.totalPnl);
+    tp.className = "val " + pnlClass(w.totalPnl);
+    if (sol && sol.priceUsd > 0 && $("wSol")) {
+      const solAmount = w.equity / sol.priceUsd;
+      $("wSol").textContent = solAmount.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 }) + " SOL";
+    }
+    $("pnlDetail").textContent = `Realized: ${signedUsd(w.realizedPnl)} · Unrealized: ${signedUsd(w.unrealizedPnl)}` + (w.allPricesKnown ? "" : " · * some prices stale");
+  } catch { }
 }
 
 async function loadToken() {
-  const address =
-    $('addressInput').value.trim();
+  const address = $('tokenInput').value.trim();
 
-  showError('');
+  hide('resolveError');
+  hide('chainChooser');
+  hide('tokenCard');
 
   if (!address) {
-    showError('Enter a token contract or Solana mint.');
+    $('resolveError').textContent = 'Paste a token contract or Solana mint address.';
+    show('resolveError');
     return;
   }
 
+  show('searchStatus');
   $('loadBtn').disabled = true;
-  $('loadBtn').textContent = 'Searching...';
+  $('loadBtn').textContent = 'SEARCHING...';
 
   try {
-    const data =
-      await api(
-        `/api/token/resolve/${encodeURIComponent(address)}`
-      );
+    const data = await api(
+      `/api/token/resolve/${encodeURIComponent(address)}`
+    );
 
-    showToken(data.token);
-  } catch (error) {
-    $('tokenCard').classList.add('hidden');
-    showError(error.message);
+    if (data.ambiguous) {
+      renderChainChooser(data.tokens);
+    } else {
+      showToken(data.token);
+    }
+
+  } catch (e) {
+    $('resolveError').textContent = e.message;
+    show('resolveError');
+
   } finally {
+    hide('searchStatus');
     $('loadBtn').disabled = false;
-    $('loadBtn').textContent = 'Load Token';
+    $('loadBtn').textContent = 'SEARCH';
   }
 }
 
-async function buyToken() {
+function renderChainChooser(tokens) {
+  const box = $('chainButtons');
+
+  box.innerHTML = '';
+
+  for (const t of tokens) {
+    const b = document.createElement('button');
+
+    b.className = 'btn';
+    b.textContent =
+      `${chainName(t.chain)}${t.symbol ? ' · ' + t.symbol : ''}`;
+
+    b.onclick = () => {
+      hide('chainChooser');
+      showToken(t);
+    };
+
+    box.appendChild(b);
+  }
+
+  show('chainChooser');
+}
+
+
+/* =========================
+   TOKEN DISPLAY
+========================= */
+
+function showToken(t) {
+  currentToken = t;
+
+  const key = `${t.chain}:${t.address.toLowerCase()}`;
+
+  lastPriceUpdate[key] = t.updatedAt;
+
+  $('tSymbol').textContent = t.symbol || 'UNKNOWN';
+
+  $('tName').textContent =
+    t.name || 'Unknown Token';
+
+  $('tIcon').textContent =
+    (t.symbol || '?').slice(0, 2).toUpperCase();
+
+  $('tChain').textContent =
+    chainName(t.chain);
+
+  $('tDex').textContent =
+    t.dex || 'DEX unavailable';
+
+  $('tPrice').textContent =
+    fmtPrice(t.priceUsd);
+
+  $('tChange').textContent =
+    '24h ' + fmtPct(t.priceChange24h);
+
+  $('tChange').className =
+    pnlClass(t.priceChange24h);
+
+  $('tMcap').textContent =
+    fmtCompact(t.marketCapUsd);
+
+  $('tLiq').textContent =
+    fmtCompact(t.liquidityUsd);
+
+  $('tVol').textContent =
+    fmtCompact(t.volume24hUsd);
+
+  $('tAddr').textContent =
+    t.address;
+
+  $('tUpdated').textContent =
+    timeAgo(t.updatedAt);
+
+  $('amountInput').value = '';
+
+  hide('buyError');
+  hide('tStale');
+
+  show('tokenCard');
+
+  $('tokenCard').scrollIntoView({
+    behavior: 'smooth',
+    block: 'nearest'
+  });
+}
+
+
+/* =========================
+   LIVE TOKEN PRICE
+========================= */
+
+async function refreshCurrentToken() {
+  if (!currentToken) return;
+
+  const t = currentToken;
+
+  try {
+    const result = await api(
+      `/api/price/${t.chain}/${encodeURIComponent(t.address)}`
+    );
+
+    if (
+      result.price &&
+      result.price.priceUsd != null
+    ) {
+      const p = result.price;
+
+      $('tPrice').textContent =
+        fmtPrice(p.priceUsd);
+
+      $('tUpdated').textContent =
+        timeAgo(p.updatedAt);
+
+      const key =
+        `${t.chain}:${t.address.toLowerCase()}`;
+
+      lastPriceUpdate[key] = p.updatedAt;
+
+      hide('tStale');
+
+    } else {
+      markStale(t);
+    }
+
+  } catch {
+    markStale(t);
+  }
+}
+
+function markStale(t) {
+  show('tStale');
+
+  const key =
+    `${t.chain}:${t.address.toLowerCase()}`;
+
+  $('tUpdated').textContent =
+    timeAgo(lastPriceUpdate[key]);
+
+  $('tPrice').textContent =
+    fmtPrice(t.priceUsd);
+}
+
+
+/* =========================
+   BUY
+========================= */
+
+async function buy() {
   if (!currentToken) {
-    showError('Load a token first.');
+    alert('Load a token first.');
     return;
   }
 
-  const amount =
-    Number($('amountInput').value);
+  const amount = Number(
+    $('amountInput').value
+  );
+
+  hide('buyError');
 
   if (!Number.isFinite(amount) || amount <= 0) {
-    showError('Enter a valid investment amount.');
+    $('buyError').textContent =
+      'Enter a valid investment amount.';
+
+    show('buyError');
     return;
   }
 
-  if (!currentToken.priceUsd || currentToken.priceUsd <= 0) {
-    showError('This token does not currently have a live price.');
-    return;
-  }
+  const button = $('buyBtn');
 
-  $('buyBtn').disabled = true;
+  button.disabled = true;
+  button.textContent = 'BUYING...';
 
   try {
     await api('/api/buy', {
@@ -198,78 +390,31 @@ async function buyToken() {
 
     $('amountInput').value = '';
 
-    await refreshAll();
-  } catch (error) {
-    showError(error.message);
+    await Promise.all([
+      refreshWallet(),
+      refreshPositions(),
+      refreshTrades()
+    ]);
+
+  } catch (e) {
+    $('buyError').textContent = e.message;
+    show('buyError');
+
   } finally {
-    $('buyBtn').disabled = false;
+    button.disabled = false;
+    button.textContent = 'BUY TOKEN';
   }
 }
 
-async function refreshPositions() {
-  const data = await api('/api/positions');
 
-  if (!data.positions.length) {
-    $('positions').innerHTML =
-      '<p class="muted">No open positions.</p>';
-    return;
-  }
+/* =========================
+   SELL
+========================= */
 
-  const results = await Promise.all(
-    data.positions.map(async position => {
-      let price = position.entryPriceUsd;
-
-      try {
-        const result =
-          await api(
-            `/api/price/${encodeURIComponent(position.chain)}/${encodeURIComponent(position.tokenAddress)}`
-          );
-
-        if (result.price?.priceUsd) {
-          price = Number(result.price.priceUsd);
-        }
-      } catch (_) {}
-
-      const value =
-        position.quantity * price;
-
-      const pnl =
-        value - position.investedUsd;
-
-      return `
-        <div class="position">
-          <div class="position-top">
-            <strong>${escapeHtml(position.symbol || position.tokenName)}</strong>
-            <span>${money(value)}</span>
-          </div>
-
-          <div class="position-details">
-            <span>Entry: ${money(position.entryPriceUsd)}</span>
-            <span>Current: ${money(price)}</span>
-            <span>Qty: ${number(position.quantity)}</span>
-          </div>
-
-          <div class="${pnl >= 0 ? 'profit' : 'loss'}">
-            P&L: ${money(pnl)}
-          </div>
-
-          <button
-            onclick="sellPosition(${position.id})"
-            class="danger"
-          >
-            SELL
-          </button>
-        </div>
-      `;
-    })
-  );
-
-  $('positions').innerHTML =
-    results.join('');
-}
-
-async function sellPosition(id) {
-  if (!confirm('Sell this paper position at the current market price?')) {
+async function sell(positionId) {
+  if (!confirm(
+    'Sell this paper position at the current real market price?'
+  )) {
     return;
   }
 
@@ -277,69 +422,263 @@ async function sellPosition(id) {
     await api('/api/sell', {
       method: 'POST',
       body: JSON.stringify({
-        positionId: id
+        positionId
       })
     });
 
-    await refreshAll();
-  } catch (error) {
-    alert(error.message);
+    await Promise.all([
+      refreshWallet(),
+      refreshPositions(),
+      refreshTrades()
+    ]);
+
+  } catch (e) {
+    alert(e.message);
   }
 }
+
+
+/* =========================
+   POSITIONS
+========================= */
+
+async function refreshPositions() {
+  try {
+    const data = await api('/api/positions');
+
+    const positions = data.positions || [];
+
+    $('positionCount').textContent =
+      positions.length
+        ? `${positions.length} OPEN`
+        : '';
+
+    const list = $('positionsList');
+
+    if (!positions.length) {
+      list.innerHTML =
+        '<p class="empty">No open positions.</p>';
+      return;
+    }
+
+    list.innerHTML = '';
+
+    for (const p of positions) {
+      const div = document.createElement('div');
+
+      div.className = 'pos';
+
+      const pnl = p.unrealizedPnlUsd;
+
+      const stale =
+        p.currentPriceUsd == null;
+
+      div.innerHTML = `
+        <div class="pos-top">
+
+          <div>
+            <div class="pos-sym">
+              ${esc(p.symbol || p.tokenName || 'TOKEN')}
+            </div>
+
+            <div class="muted small">
+              ${esc(chainName(p.chain))}
+            </div>
+          </div>
+
+          <div style="text-align:right">
+
+            ${
+              stale
+                ? '<span class="stale-badge">STALE</span>'
+                : ''
+            }
+
+            <div>
+              ${
+                stale
+                  ? 'Price unavailable'
+                  : fmtPrice(p.currentPriceUsd)
+              }
+            </div>
+
+            <div class="muted small">
+              ${
+                p.priceUpdatedAt
+                  ? 'updated ' + timeAgo(p.priceUpdatedAt)
+                  : ''
+              }
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="pos-grid">
+
+          <div>
+            <span class="label">ENTRY</span>
+            ${fmtPrice(p.entryPriceUsd)}
+          </div>
+
+          <div>
+            <span class="label">INVESTED</span>
+            ${fmtUsd(p.investedUsd)}
+          </div>
+
+          <div>
+            <span class="label">QUANTITY</span>
+            ${fmtQty(p.quantity)}
+          </div>
+
+          <div>
+            <span class="label">VALUE</span>
+            ${
+              p.currentValueUsd != null
+                ? fmtUsd(p.currentValueUsd)
+                : '—'
+            }
+          </div>
+
+        </div>
+
+        <div class="pos-actions">
+
+          <span
+            class="${pnlClass(pnl)}"
+            style="margin-right:10px"
+          >
+            ${
+              pnl != null
+                ? signedUsd(pnl) +
+                  ' (' +
+                  fmtPct(p.unrealizedPnlPct) +
+                  ')'
+                : '—'
+            }
+          </span>
+
+          <button class="btn sell">
+            SELL
+          </button>
+
+        </div>
+      `;
+
+      div.querySelector('.sell').onclick =
+        () => sell(p.id);
+
+      list.appendChild(div);
+    }
+
+  } catch {
+    // Keep existing positions visible.
+  }
+}
+
+
+/* =========================
+   TRADE HISTORY
+========================= */
 
 async function refreshTrades() {
-  const data = await api('/api/trades');
+  try {
+    const data = await api('/api/trades');
 
-  if (!data.trades.length) {
-    $('trades').innerHTML =
-      '<p class="muted">No trades yet.</p>';
-    return;
+    const trades = data.trades || [];
+
+    const list = $('tradesList');
+
+    if (!trades.length) {
+      list.innerHTML =
+        '<p class="empty">No closed trades yet.</p>';
+      return;
+    }
+
+    list.innerHTML = '';
+
+    for (const t of trades) {
+      const div = document.createElement('div');
+
+      div.className = 'trade';
+
+      div.innerHTML = `
+        <div class="pos-top">
+
+          <div class="pos-sym">
+            ${esc(t.symbol || t.tokenName || 'TOKEN')}
+
+            <span class="muted small">
+              ${esc(chainName(t.chain))}
+            </span>
+          </div>
+
+          <div class="muted small">
+            ${
+              t.closedAt
+                ? new Date(
+                    t.closedAt * 1000
+                  ).toLocaleDateString()
+                : ''
+            }
+          </div>
+
+        </div>
+
+        <div class="pos-grid">
+
+          <div>
+            <span class="label">ENTRY</span>
+            ${fmtPrice(t.entryPriceUsd)}
+          </div>
+
+          <div>
+            <span class="label">EXIT</span>
+            ${fmtPrice(t.exitPriceUsd)}
+          </div>
+
+          <div>
+            <span class="label">INVESTED</span>
+            ${fmtUsd(t.investedUsd)}
+          </div>
+
+          <div>
+            <span class="label">EXIT VALUE</span>
+            ${fmtUsd(t.exitValueUsd)}
+          </div>
+
+        </div>
+
+        <div class="${pnlClass(t.pnlUsd)}">
+          ${signedUsd(t.pnlUsd)}
+          (${fmtPct(t.pnlPct)})
+        </div>
+      `;
+
+      list.appendChild(div);
+    }
+
+  } catch {
+    // Ignore refresh errors.
   }
-
-  $('trades').innerHTML =
-    data.trades.map(trade => `
-      <div class="history-row">
-        <strong>${escapeHtml(trade.side)}</strong>
-        <span>${escapeHtml(trade.symbol || 'TOKEN')}</span>
-        <span>${money(trade.amountUsd)}</span>
-        <span class="${trade.pnlUsd >= 0 ? 'profit' : 'loss'}">
-          ${money(trade.pnlUsd)}
-        </span>
-      </div>
-    `).join('');
 }
 
-async function refreshBalanceHistory() {
-  const data =
-    await api('/api/balance-history');
 
-  if (!data.history.length) {
-    $('balanceHistory').innerHTML =
-      '<p class="muted">No deposits or withdrawals.</p>';
-    return;
-  }
+/* =========================
+   DEPOSIT / WITHDRAW
+========================= */
 
-  $('balanceHistory').innerHTML =
-    data.history.map(item => `
-      <div class="history-row">
-        <strong class="${item.type === 'deposit' ? 'profit' : 'loss'}">
-          ${item.type.toUpperCase()}
-        </strong>
+async function deposit() {
+  const amount = prompt(
+    'Enter amount to deposit into your paper account (USD):'
+  );
 
-        <span>${money(item.amountUsd)}</span>
+  if (amount === null) return;
 
-        <span>
-          ${new Date(item.createdAt).toLocaleString()}
-        </span>
-      </div>
-    `).join('');
-}
+  const value = Number(amount);
 
-async function depositMoney() {
-  const amount =
-    Number(prompt('Enter deposit amount in USD:'));
-
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (!Number.isFinite(value) || value <= 0) {
+    alert('Enter a valid amount.');
     return;
   }
 
@@ -347,21 +686,28 @@ async function depositMoney() {
     await api('/api/deposit', {
       method: 'POST',
       body: JSON.stringify({
-        amountUsd: amount
+        amountUsd: value
       })
     });
 
-    await refreshAll();
-  } catch (error) {
-    alert(error.message);
+    await refreshWallet();
+
+  } catch (e) {
+    alert(e.message);
   }
 }
 
-async function withdrawMoney() {
-  const amount =
-    Number(prompt('Enter withdrawal amount in USD:'));
+async function withdraw() {
+  const amount = prompt(
+    'Enter amount to withdraw from your paper account (USD):'
+  );
 
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (amount === null) return;
+
+  const value = Number(amount);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    alert('Enter a valid amount.');
     return;
   }
 
@@ -369,19 +715,61 @@ async function withdrawMoney() {
     await api('/api/withdraw', {
       method: 'POST',
       body: JSON.stringify({
-        amountUsd: amount
+        amountUsd: value
       })
     });
 
-    await refreshAll();
-  } catch (error) {
-    alert(error.message);
+    await refreshWallet();
+
+  } catch (e) {
+    alert(e.message);
   }
 }
 
-async function resetAccount() {
+
+/* =========================
+   COPY ADDRESS
+========================= */
+
+async function copyAddress() {
+  if (!currentToken || !currentToken.address) return;
+
+  try {
+    await navigator.clipboard.writeText(
+      currentToken.address
+    );
+
+    const button = $('copyAddressBtn');
+
+    button.textContent = 'COPIED';
+
+    setTimeout(() => {
+      button.textContent = 'COPY';
+    }, 1500);
+
+  } catch {
+    prompt(
+      'Copy token address:',
+      currentToken.address
+    );
+  }
+}
+
+
+/* =========================
+   RESET
+========================= */
+
+async function reset() {
   if (!confirm(
-    'Reset the paper account back to $10,000? This deletes positions and history.'
+    'Reset your paper account?\n\n' +
+    'This will delete open positions and trade history.'
+  )) {
+    return;
+  }
+
+  if (!confirm(
+    'Are you absolutely sure? This cannot be undone.'
   )) {
     return;
   }
@@ -391,44 +779,68 @@ async function resetAccount() {
       method: 'POST'
     });
 
-    await refreshAll();
-  } catch (error) {
-    alert(error.message);
+    currentToken = null;
+
+    hide('tokenCard');
+
+    await Promise.all([
+      refreshWallet(),
+      refreshPositions(),
+      refreshTrades()
+    ]);
+
+  } catch (e) {
+    alert(e.message);
   }
 }
 
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+
+/* =========================
+   POLLING
+========================= */
+
+async function pollPrices() {
+  await refreshCurrentToken();
+  await refreshPositions();
+  await refreshWallet();
 }
 
-async function refreshAll() {
-  try {
-    await refreshWallet();
-    await refreshPositions();
-    await refreshTrades();
-    await refreshBalanceHistory();
-  } catch (error) {
-    console.error(error);
+
+/* =========================
+   EVENTS
+========================= */
+
+$('loadBtn').onclick = loadToken;
+
+$('tokenInput').addEventListener(
+  'keydown',
+  e => {
+    if (e.key === 'Enter') {
+      loadToken();
+    }
   }
-}
+);
 
-$('loadBtn').addEventListener('click', loadToken);
-$('buyBtn').addEventListener('click', buyToken);
-$('depositBtn').addEventListener('click', depositMoney);
-$('withdrawBtn').addEventListener('click', withdrawMoney);
-$('resetBtn').addEventListener('click', resetAccount);
+$('buyBtn').onclick = buy;
 
-$('addressInput').addEventListener('keydown', event => {
-  if (event.key === 'Enter') {
-    loadToken();
-  }
-});
+$('depositBtn').onclick = deposit;
 
-refreshAll();
+$('withdrawBtn').onclick = withdraw;
 
-setInterval(refreshAll, 7000);
+$('copyAddressBtn').onclick = copyAddress;
+
+$('resetBtn').onclick = reset;
+
+
+/* =========================
+   INITIAL LOAD
+========================= */
+
+refreshWallet();
+refreshPositions();
+refreshTrades();
+
+setInterval(
+  pollPrices,
+  POLL_MS
+);
