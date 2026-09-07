@@ -4,14 +4,14 @@
   "description": "Multi-chain paper trading simulator using real market prices. No real funds, no wallets, no transactions.",
   "main": "server.js",
   "engines": {
-    "node": ">=18"
+    "node": "22.22.0"
   },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "13.0.3",
     "express": "^4.19.2"
   }
 }
