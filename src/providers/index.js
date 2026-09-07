@@ -1,114 +1,48 @@
 const dexscreener = require('./dexscreener');
 const gecko = require('./geckoterminal');
 
-const priceCache = new Map();
-const metadataCache = new Map();
+const cache = new Map();
 
 const PRICE_TTL = 6000;
-const METADATA_TTL = 60000;
-const NEGATIVE_TTL = 10000;
+const TOKEN_TTL = 30000;
+const MISS_TTL = 5000;
 
-function cacheKey(chain, address) {
+function key(chain, address) {
   return `${chain || 'auto'}:${String(address).toLowerCase()}`;
 }
 
-function cached(map, key) {
-  const item = map.get(key);
+function getCached(k) {
+  const item = cache.get(k);
 
   if (!item) return null;
 
-  if (Date.now() - item.time > item.ttl) {
-    map.delete(key);
+  if (Date.now() > item.expires) {
+    cache.delete(k);
     return null;
   }
 
   return item.value;
 }
 
-function put(map, key, value, ttl) {
-  map.set(key, {
+function setCached(k, value, ttl) {
+  cache.set(k, {
     value,
-    time: Date.now(),
-    ttl
+    expires: Date.now() + ttl
   });
 
-  if (map.size > 5000) {
-    const first = map.keys().next().value;
-    map.delete(first);
+  if (cache.size > 2000) {
+    const first = cache.keys().next().value;
+
+    if (first) cache.delete(first);
   }
 }
 
-function parseMeta(html) {
-  if (!html) return null;
-
-  const get = name => {
-    const re = new RegExp(
-      `<meta[^>]+(?:property|name)=["']${name}["'][^>]+content=["']([^"']*)["']`,
-      'i'
-    );
-
-    return html.match(re)?.[1] || null;
-  };
-
-  const title = get('og:title') || get('twitter:title');
-  const description = get('og:description') || get('twitter:description');
-
-  if (!title && !description) return null;
-
-  let name = title || 'Pump.fun Token';
-  let symbol = 'UNKNOWN';
-
-  const match = name.match(/^(.*?)\s*\$([A-Za-z0-9_]+)(?:\s|$)/);
-
-  if (match) {
-    name = match[1].trim();
-    symbol = match[2];
-  }
-
-  return {
-    name,
-    symbol
-  };
-}
-
-async function pumpFunFallback(address) {
-  try {
-    const url =
-      `https://pump.fun/explore?outputCurrency=${encodeURIComponent(address)}`;
-
-    const res = await fetch(url, {
-      headers: {
-        accept: 'text/html',
-        'user-agent': 'PaperTrade/1.0'
-      }
-    });
-
-    if (!res.ok) return null;
-
-    const html = await res.text();
-    const meta = parseMeta(html);
-
-    if (!meta) return null;
-
-    return {
-      chain: 'solana',
-      address,
-      name: meta.name,
-      symbol: meta.symbol,
-      priceUsd: 0,
-      marketCapUsd: 0,
-      liquidityUsd: 0,
-      volume24hUsd: 0,
-      priceChange24h: 0,
-      pairAddress: null,
-      dex: 'Pump.fun',
-      source: 'pump.fun',
-      priceAvailable: false,
-      updatedAt: Date.now()
-    };
-  } catch (_) {
-    return null;
-  }
+function isUsablePrice(value) {
+  return (
+    value &&
+    Number.isFinite(Number(value.priceUsd)) &&
+    Number(value.priceUsd) > 0
+  );
 }
 
 async function resolveToken(address, chainHint = null) {
@@ -116,81 +50,122 @@ async function resolveToken(address, chainHint = null) {
 
   if (!clean) return null;
 
-  const key = cacheKey(chainHint, clean);
+  const k = key(chainHint, clean);
+  const cached = getCached(k);
 
-  const cachedValue = cached(metadataCache, key);
+  if (cached) return cached;
 
-  if (cachedValue) {
-    return cachedValue;
-  }
+  let result = null;
 
-  // 1. DexScreener.
   try {
-    const result = await dexscreener.resolveToken(clean);
-
-    if (result) {
-      put(metadataCache, key, result, METADATA_TTL);
-      put(priceCache, key, result, PRICE_TTL);
-      return result;
-    }
+    result = await dexscreener.resolveToken(
+      clean,
+      chainHint
+    );
   } catch (_) {}
 
-  // 2. GeckoTerminal.
-  try {
-    const result = await gecko.resolveToken(clean, chainHint);
-
-    if (result) {
-      put(metadataCache, key, result, METADATA_TTL);
-      put(priceCache, key, result, PRICE_TTL);
-      return result;
-    }
-  } catch (_) {}
-
-  // 3. Pump.fun for Solana addresses.
-  if (!chainHint || chainHint === 'solana') {
-    const pump = await pumpFunFallback(clean);
-
-    if (pump) {
-      put(metadataCache, key, pump, METADATA_TTL);
-      return pump;
-    }
+  if (!result) {
+    try {
+      result = await gecko.resolveToken(
+        clean,
+        chainHint
+      );
+    } catch (_) {}
   }
 
-  put(metadataCache, key, null, NEGATIVE_TTL);
+  /*
+   * Pump.fun is a Solana launchpad.
+   * Only use it as metadata fallback.
+   * A zero price is never accepted as a tradable price.
+   */
+  if (
+    !result &&
+    (!chainHint || chainHint === 'solana')
+  ) {
+    try {
+      const res = await fetch(
+        `https://frontend-api.pump.fun/coins/${encodeURIComponent(clean)}`,
+        {
+          headers: {
+            accept: 'application/json',
+            'user-agent': 'PaperTrade/1.0'
+          }
+        }
+      );
+
+      if (res.ok) {
+        const coin = await res.json();
+
+        if (coin && coin.mint === clean) {
+          result = {
+            chain: 'solana',
+            address: clean,
+            name: coin.name || 'Unknown Token',
+            symbol: coin.symbol || 'UNKNOWN',
+            priceUsd: 0,
+            marketCapUsd:
+              Number(coin.usd_market_cap || 0) || 0,
+            liquidityUsd: 0,
+            volume24hUsd: 0,
+            priceChange24h: 0,
+            pairAddress: null,
+            dex: 'Pump.fun',
+            source: 'pump.fun',
+            priceAvailable: false,
+            updatedAt: Date.now()
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (result) {
+    setCached(
+      k,
+      result,
+      result.priceAvailable === false
+        ? TOKEN_TTL
+        : PRICE_TTL
+    );
+
+    return result;
+  }
+
+  setCached(k, null, MISS_TTL);
 
   return null;
 }
 
 async function getPrice(chain, address) {
-  const key = cacheKey(chain, address);
+  const k = key(chain, address);
+  const cached = getCached(k);
 
-  const existing = cached(priceCache, key);
-
-  if (existing && existing.priceAvailable !== false) {
-    return existing;
+  if (isUsablePrice(cached)) {
+    return cached;
   }
 
-  // DexScreener first.
-  try {
-    const result = await dexscreener.getPrice(address);
+  let result = null;
 
-    if (result) {
-      put(priceCache, key, result, PRICE_TTL);
-      put(metadataCache, key, result, METADATA_TTL);
-      return result;
-    }
+  try {
+    result = await dexscreener.getPrice(
+      address,
+      chain
+    );
   } catch (_) {}
 
-  // GeckoTerminal fallback.
-  try {
-    const result = await gecko.getPrice(address, chain);
+  if (!isUsablePrice(result)) {
+    try {
+      result = await gecko.getPrice(
+        address,
+        chain
+      );
+    } catch (_) {}
+  }
 
-    if (result) {
-      put(priceCache, key, result, PRICE_TTL);
-      put(metadataCache, key, result, METADATA_TTL);
-      return result;
-    }
-  } catch (_) {}
+  if (isUsablePrice(result)) {
+    setCached(k, result, PRICE_TTL);
+    return result;
+  }
 
   return null;
 }
@@ -199,9 +174,12 @@ async function getSolPrice() {
   const solMint =
     'So11111111111111111111111111111111111111112';
 
-  const result = await getPrice('solana', solMint);
+  const result = await getPrice(
+    'solana',
+    solMint
+  );
 
-  if (!result || !Number.isFinite(Number(result.priceUsd))) {
+  if (!isUsablePrice(result)) {
     throw new Error('Unable to get SOL price');
   }
 

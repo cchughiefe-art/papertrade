@@ -1,85 +1,176 @@
-const $ = id => document.getElementById(id);
+const $ = id =>
+  document.getElementById(id);
 
 const POLL_MS = 7000;
 
-let sessionId = localStorage.getItem('pt_session');
+let sessionId =
+  localStorage.getItem('pt_session');
 
 if (!sessionId) {
-  sessionId = (crypto.randomUUID ? crypto.randomUUID() : 's' + Date.now() + Math.random().toString(36).slice(2))
-    .replace(/-/g, '');
+  sessionId =
+    crypto.randomUUID
+      ? crypto.randomUUID()
+      : 's' +
+        Date.now() +
+        Math.random()
+          .toString(36)
+          .slice(2);
 
-  localStorage.setItem('pt_session', sessionId);
+  localStorage.setItem(
+    'pt_session',
+    sessionId
+  );
 }
 
 let currentToken = null;
-let lastPriceUpdate = {};
 
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Session-Id': sessionId,
-      ...(opts.headers || {})
-    }
-  });
+async function api(
+  url,
+  options = {}
+) {
+  const response =
+    await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type':
+          'application/json',
+        'X-Session-Id':
+          sessionId,
+        ...(options.headers || {})
+      }
+    });
 
-  const data = await res.json().catch(() => ({}));
+  const data =
+    await response
+      .json()
+      .catch(() => ({}));
 
-  if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}`);
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+      `HTTP ${response.status}`
+    );
   }
 
   return data;
 }
 
-function fmtUsd(n, dec = 2) {
-  if (n == null || !Number.isFinite(Number(n))) return '—';
+function fmtUsd(
+  value,
+  decimals = 2
+) {
+  const n = Number(value);
 
-  return '$' + Number(n).toLocaleString('en-US', {
-    minimumFractionDigits: dec,
-    maximumFractionDigits: dec
-  });
+  if (!Number.isFinite(n)) {
+    return '—';
+  }
+
+  return (
+    '$' +
+    n.toLocaleString(
+      'en-US',
+      {
+        minimumFractionDigits:
+          decimals,
+        maximumFractionDigits:
+          decimals
+      }
+    )
+  );
 }
 
-function fmtPrice(p) {
-  if (p == null || !Number.isFinite(Number(p))) return '—';
+function fmtPrice(value) {
+  const n = Number(value);
 
-  p = Number(p);
+  if (!Number.isFinite(n)) {
+    return '—';
+  }
 
-  if (p >= 1) return fmtUsd(p, 2);
-  if (p >= 0.01) return '$' + p.toFixed(4);
+  if (n >= 1) {
+    return fmtUsd(n, 2);
+  }
 
-  return '$' + Number(p.toPrecision(4)).toString();
+  if (n >= 0.01) {
+    return '$' + n.toFixed(4);
+  }
+
+  return (
+    '$' +
+    Number(
+      n.toPrecision(5)
+    ).toString()
+  );
 }
 
-function fmtCompact(n) {
-  if (n == null || !Number.isFinite(Number(n))) return '—';
+function fmtCompact(value) {
+  const n = Number(value);
 
-  return '$' + Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    maximumFractionDigits: 1
-  }).format(Number(n));
+  if (!Number.isFinite(n)) {
+    return '—';
+  }
+
+  return (
+    '$' +
+    Intl.NumberFormat(
+      'en-US',
+      {
+        notation: 'compact',
+        maximumFractionDigits: 1
+      }
+    ).format(n)
+  );
 }
 
-function fmtQty(q) {
-  if (q == null) return '—';
+function fmtQty(value) {
+  const n = Number(value);
 
-  return Number(q).toLocaleString('en-US', {
-    maximumFractionDigits: 8
-  });
+  if (!Number.isFinite(n)) {
+    return '—';
+  }
+
+  return n.toLocaleString(
+    'en-US',
+    {
+      maximumFractionDigits: 8
+    }
+  );
 }
 
-function fmtPct(n) {
-  if (n == null || !Number.isFinite(Number(n))) return '—';
+function fmtPct(value) {
+  const n = Number(value);
 
-  n = Number(n);
+  if (!Number.isFinite(n)) {
+    return '—';
+  }
 
-  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+  return (
+    (n >= 0 ? '+' : '') +
+    n.toFixed(2) +
+    '%'
+  );
 }
 
-function pnlClass(n) {
-  n = Number(n);
+function signedUsd(value) {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) {
+    return '—';
+  }
+
+  return (
+    n >= 0 ? '+$' : '-$'
+  ) +
+    Math.abs(n).toLocaleString(
+      'en-US',
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }
+    );
+}
+
+function pnlClass(value) {
+  const n = Number(value);
 
   if (n > 0) return 'green';
   if (n < 0) return 'red';
@@ -87,52 +178,7 @@ function pnlClass(n) {
   return '';
 }
 
-function signedUsd(n) {
-  if (n == null || !Number.isFinite(Number(n))) return '—';
-
-  n = Number(n);
-
-  return (n >= 0 ? '+$' : '-$') +
-    Math.abs(n).toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-}
-
-function timeAgo(ts) {
-  if (!ts) return '—';
-
-  const seconds = Math.max(
-    0,
-    Math.floor(Date.now() / 1000) - Number(ts)
-  );
-
-  if (seconds < 60) return `${seconds}s ago`;
-
-  const minutes = Math.floor(seconds / 60);
-
-  if (minutes < 60) return `${minutes}m ago`;
-
-  const hours = Math.floor(minutes / 60);
-
-  return `${hours}h ago`;
-}
-
-function hide(id) {
-  $(id).classList.add('hidden');
-}
-
-function show(id) {
-  $(id).classList.remove('hidden');
-}
-
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = String(s ?? '');
-  return d.innerHTML;
-}
-
-function chainName(id) {
+function chainName(chain) {
   return {
     solana: 'Solana',
     ethereum: 'Ethereum',
@@ -141,669 +187,600 @@ function chainName(id) {
     arbitrum: 'Arbitrum',
     polygon: 'Polygon',
     avalanche: 'Avalanche'
-  }[id] || id;
+  }[chain] || chain;
 }
 
+function timeAgo(date) {
+  if (!date) return '—';
 
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
+  const ms =
+    typeof date === 'number'
+      ? date
+      : Date.parse(date);
 
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
+  if (!Number.isFinite(ms)) {
+    return '—';
   }
 
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
+  const seconds =
+    Math.max(
+      0,
+      Math.floor(
+        (Date.now() - ms) / 1000
+      )
+    );
 
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
+  if (seconds < 60) {
+    return `${seconds}s ago`;
   }
+
+  const minutes =
+    Math.floor(seconds / 60);
+
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  return (
+    Math.floor(minutes / 60) +
+    'h ago'
+  );
 }
 
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+function esc(value) {
+  const div =
+    document.createElement('div');
 
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
+  div.textContent =
+    String(value ?? '');
+
+  return div.innerHTML;
 }
 
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
+function show(id) {
+  $(id)?.classList.remove(
+    'hidden'
+  );
 }
 
-/* =========================
-   WALLET
-========================= */
+function hide(id) {
+  $(id)?.classList.add(
+    'hidden'
+  );
+}
+
+/* WALLET */
 
 async function refreshWallet() {
   try {
-    const data = await api("/api/wallet");
-    const w = data.wallet || data;
+    const data =
+      await api('/api/wallet');
 
-    if ($("wCash")) $("wCash").textContent = fmtUsd(w.cashUsd);
-    if ($("wPositions")) $("wPositions").textContent = fmtUsd(w.positionValueUsd);
-    if ($("wEquity")) $("wEquity").textContent = fmtUsd(w.equityUsd);
+    const w =
+      data.wallet || {};
 
-    if ($("wRealized")) $("wRealized").textContent = signedUsd(w.totalPnlUsd);
-    if ($("wUnrealized")) $("wUnrealized").textContent = "$0.00";
-
-    if ($("solValue")) {
-      $("solValue").textContent = w.equitySol != null
-        ? Number(w.equitySol).toFixed(6) + " SOL"
-        : "—";
+    if ($('wCash')) {
+      $('wCash').textContent =
+        fmtUsd(w.cashUsd);
     }
-  } catch (e) {
-    console.error("Wallet refresh failed:", e);
+
+    if ($('wPositions')) {
+      $('wPositions').textContent =
+        fmtUsd(
+          w.positionValueUsd
+        );
+    }
+
+    if ($('wEquity')) {
+      $('wEquity').textContent =
+        fmtUsd(
+          w.equityUsd
+        );
+    }
+
+    if ($('wRealized')) {
+      $('wRealized').textContent =
+        signedUsd(
+          w.realizedPnlUsd
+        );
+    }
+
+    if ($('wUnrealized')) {
+      $('wUnrealized').textContent =
+        signedUsd(
+          w.unrealizedPnlUsd
+        );
+    }
+
+    if ($('solValue')) {
+      $('solValue').textContent =
+        w.equitySol != null
+          ? Number(
+              w.equitySol
+            ).toLocaleString(
+              'en-US',
+              {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 8
+              }
+            ) + ' SOL'
+          : '—';
+    }
+  } catch (error) {
+    console.error(
+      'Wallet refresh:',
+      error
+    );
   }
 }
 
+/* TOKEN SEARCH */
+
 async function loadToken() {
-  const address = $('tokenInput').value.trim();
+  const input =
+    $('tokenInput');
+
+  const address =
+    input.value.trim();
 
   hide('resolveError');
   hide('chainChooser');
   hide('tokenCard');
 
   if (!address) {
-    $('resolveError').textContent = 'Paste a token contract or Solana mint address.';
+    $('resolveError')
+      .textContent =
+      'Paste a token contract or Solana mint address.';
+
     show('resolveError');
+
     return;
   }
 
+  const button =
+    $('loadBtn');
+
+  button.disabled = true;
+  button.textContent =
+    'SEARCHING...';
+
   show('searchStatus');
-  $('loadBtn').disabled = true;
-  $('loadBtn').textContent = 'SEARCHING...';
 
   try {
-    const data = await api(
-      `/api/token/resolve/${encodeURIComponent(address)}`
-    );
+    const data =
+      await api(
+        '/api/token/resolve/' +
+        encodeURIComponent(
+          address
+        )
+      );
 
-    if (data.ambiguous) {
-      renderChainChooser(data.tokens);
+    if (
+      data.ambiguous &&
+      Array.isArray(data.tokens)
+    ) {
+      renderChainChooser(
+        data.tokens
+      );
     } else {
-      showToken(data.token);
+      showToken(
+        data.token
+      );
     }
+  } catch (error) {
+    $('resolveError')
+      .textContent =
+      error.message;
 
-  } catch (e) {
-    $('resolveError').textContent = e.message;
     show('resolveError');
-
   } finally {
     hide('searchStatus');
-    $('loadBtn').disabled = false;
-    $('loadBtn').textContent = 'SEARCH';
+
+    button.disabled = false;
+    button.textContent =
+      'SEARCH';
   }
 }
 
-function renderChainChooser(tokens) {
-  const box = $('chainButtons');
+function renderChainChooser(
+  tokens
+) {
+  const box =
+    $('chainButtons');
 
   box.innerHTML = '';
 
-  for (const t of tokens) {
-    const b = document.createElement('button');
+  tokens.forEach(token => {
+    const button =
+      document.createElement(
+        'button'
+      );
 
-    b.className = 'btn';
-    b.textContent =
-      `${chainName(t.chain)}${t.symbol ? ' · ' + t.symbol : ''}`;
+    button.className =
+      'btn';
 
-    b.onclick = () => {
+    button.textContent =
+      `${chainName(
+        token.chain
+      )} · ${
+        token.symbol ||
+        'TOKEN'
+      }`;
+
+    button.onclick = () => {
       hide('chainChooser');
-      showToken(t);
+      showToken(token);
     };
 
-    box.appendChild(b);
-  }
+    box.appendChild(
+      button
+    );
+  });
 
   show('chainChooser');
 }
 
+/* TOKEN DISPLAY */
 
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
+function showToken(token) {
+  if (!token) {
+    throw new Error(
+      'Token data missing'
+    );
   }
 
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
+  currentToken = token;
 
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
+  $('tSymbol')
+    .textContent =
+    token.symbol ||
+    'UNKNOWN';
 
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+  $('tName')
+    .textContent =
+    token.name ||
+    'Unknown Token';
 
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
+  $('tIcon')
+    .textContent =
+    (
+      token.symbol ||
+      '?'
+    )
+      .slice(0, 2)
+      .toUpperCase();
 
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   TOKEN DISPLAY
-========================= */
-
-function showToken(t) {
-  currentToken = t;
-
-  const key = `${t.chain}:${t.address.toLowerCase()}`;
-
-  lastPriceUpdate[key] = t.updatedAt;
-
-  $('tSymbol').textContent = t.symbol || 'UNKNOWN';
-
-  $('tName').textContent =
-    t.name || 'Unknown Token';
-
-  $('tIcon').textContent =
-    (t.symbol || '?').slice(0, 2).toUpperCase();
-
-  $('tChain').textContent =
-    chainName(t.chain);
-
-  $('tDex').textContent =
-    t.dex || 'DEX unavailable';
-
-  $('tPrice').textContent =
-    fmtPrice(t.priceUsd);
-
-  $('tChange').textContent =
-    '24h ' + fmtPct(t.priceChange24h);
-
-  $('tChange').className =
-    pnlClass(t.priceChange24h);
-
-  $('tMcap').textContent =
-    fmtCompact(t.marketCapUsd);
-
-  $('tLiq').textContent =
-    fmtCompact(t.liquidityUsd);
-
-  $('tVol').textContent =
-    fmtCompact(t.volume24hUsd);
-
-  $('tAddr').textContent =
-    t.address;
-
-  $('tUpdated').textContent =
-    timeAgo(t.updatedAt);
-
-  $('amountInput').value = '';
-
-  hide('buyError');
-  hide('tStale');
-
-  show('tokenCard');
-
-  $('tokenCard').scrollIntoView({
-    behavior: 'smooth',
-    block: 'nearest'
-  });
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   LIVE TOKEN PRICE
-========================= */
-
-async function refreshCurrentToken() {
-  if (!currentToken) return;
-
-  const t = currentToken;
-
-  try {
-    const result = await api(
-      `/api/price/${t.chain}/${encodeURIComponent(t.address)}`
+  $('tChain')
+    .textContent =
+    chainName(
+      token.chain
     );
 
-    if (
-      result.price &&
-      result.price.priceUsd != null
-    ) {
-      const p = result.price;
+  $('tDex')
+    .textContent =
+    token.dex ||
+    'DEX unavailable';
 
-      $('tPrice').textContent =
-        fmtPrice(p.priceUsd);
+  $('tPrice')
+    .textContent =
+    fmtPrice(
+      token.priceUsd
+    );
 
-      $('tUpdated').textContent =
-        timeAgo(p.updatedAt);
+  $('tChange')
+    .textContent =
+    '24h ' +
+    fmtPct(
+      token.priceChange24h
+    );
 
-      const key =
-        `${t.chain}:${t.address.toLowerCase()}`;
+  $('tChange')
+    .className =
+    pnlClass(
+      token.priceChange24h
+    );
 
-      lastPriceUpdate[key] = p.updatedAt;
+  $('tMcap')
+    .textContent =
+    fmtCompact(
+      token.marketCapUsd
+    );
 
-      hide('tStale');
+  $('tLiq')
+    .textContent =
+    fmtCompact(
+      token.liquidityUsd
+    );
 
-    } else {
-      markStale(t);
-    }
+  $('tVol')
+    .textContent =
+    fmtCompact(
+      token.volume24hUsd
+    );
 
-  } catch {
-    markStale(t);
-  }
-}
+  $('tAddr')
+    .textContent =
+    token.address;
 
-function markStale(t) {
-  show('tStale');
+  $('tUpdated')
+    .textContent =
+    timeAgo(
+      token.updatedAt
+    );
 
-  const key =
-    `${t.chain}:${t.address.toLowerCase()}`;
-
-  $('tUpdated').textContent =
-    timeAgo(lastPriceUpdate[key]);
-
-  $('tPrice').textContent =
-    fmtPrice(t.priceUsd);
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   BUY
-========================= */
-
-async function buy() {
-  if (!currentToken) {
-    alert('Load a token first.');
-    return;
-  }
-
-  const amount = Number(
-    $('amountInput').value
-  );
+  $('amountInput').value =
+    '';
 
   hide('buyError');
 
-  if (!Number.isFinite(amount) || amount <= 0) {
-    $('buyError').textContent =
+  if (
+    token.priceAvailable === false
+  ) {
+    show('tStale');
+  } else {
+    hide('tStale');
+  }
+
+  show('tokenCard');
+}
+
+/* LIVE TOKEN */
+
+async function refreshCurrentToken() {
+  if (!currentToken) {
+    return;
+  }
+
+  try {
+    const data =
+      await api(
+        `/api/price/${
+          currentToken.chain
+        }/${
+          encodeURIComponent(
+            currentToken.address
+          )
+        }`
+      );
+
+    const price =
+      data.price;
+
+    if (
+      !price ||
+      !Number.isFinite(
+        Number(price.priceUsd)
+      )
+    ) {
+      throw new Error(
+        'No live price'
+      );
+    }
+
+    currentToken = {
+      ...currentToken,
+      ...price
+    };
+
+    $('tPrice')
+      .textContent =
+      fmtPrice(
+        price.priceUsd
+      );
+
+    $('tChange')
+      .textContent =
+      '24h ' +
+      fmtPct(
+        price.priceChange24h
+      );
+
+    $('tChange')
+      .className =
+      pnlClass(
+        price.priceChange24h
+      );
+
+    $('tMcap')
+      .textContent =
+      fmtCompact(
+        price.marketCapUsd
+      );
+
+    $('tLiq')
+      .textContent =
+      fmtCompact(
+        price.liquidityUsd
+      );
+
+    $('tVol')
+      .textContent =
+      fmtCompact(
+        price.volume24hUsd
+      );
+
+    $('tUpdated')
+      .textContent =
+      timeAgo(
+        price.updatedAt
+      );
+
+    hide('tStale');
+  } catch (_) {
+    show('tStale');
+  }
+}
+
+/* BUY */
+
+async function buyToken() {
+  if (!currentToken) {
+    alert(
+      'Load a token first.'
+    );
+
+    return;
+  }
+
+  const amount =
+    Number(
+      $('amountInput').value
+    );
+
+  hide('buyError');
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    $('buyError')
+      .textContent =
       'Enter a valid investment amount.';
 
     show('buyError');
+
     return;
   }
 
-  const button = $('buyBtn');
+  const button =
+    $('buyBtn');
 
   button.disabled = true;
-  button.textContent = 'BUYING...';
+  button.textContent =
+    'BUYING...';
 
   try {
-    await api('/api/buy', {
-      method: 'POST',
-      body: JSON.stringify({
-        chain: currentToken.chain,
-        address: currentToken.address,
-        amountUsd: amount
-      })
-    });
+    await api(
+      '/api/buy',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          chain:
+            currentToken.chain,
+          address:
+            currentToken.address,
+          amountUsd:
+            amount
+        })
+      }
+    );
 
-    $('amountInput').value = '';
+    $('amountInput').value =
+      '';
 
-    await Promise.all([
-      refreshWallet(),
-      refreshPositions(),
-      refreshTrades()
-    ]);
+    await refreshAll();
+  } catch (error) {
+    $('buyError')
+      .textContent =
+      error.message;
 
-  } catch (e) {
-    $('buyError').textContent = e.message;
     show('buyError');
-
   } finally {
     button.disabled = false;
-    button.textContent = 'BUY TOKEN';
+    button.textContent =
+      'BUY TOKEN';
   }
 }
 
+/* SELL */
 
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
+async function sellPosition(
+  positionId
+) {
+  if (
+    !confirm(
+      'Sell this paper position at the current real market price?'
+    )
+  ) {
     return;
   }
 
   try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
+    await api(
+      '/api/sell',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          positionId
+        })
+      }
+    );
 
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
+    await refreshAll();
+  } catch (error) {
+    alert(
+      error.message
+    );
   }
 }
 
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   SELL
-========================= */
-
-async function sell(positionId) {
-  if (!confirm(
-    'Sell this paper position at the current real market price?'
-  )) {
-    return;
-  }
-
-  try {
-    await api('/api/sell', {
-      method: 'POST',
-      body: JSON.stringify({
-        positionId
-      })
-    });
-
-    await Promise.all([
-      refreshWallet(),
-      refreshPositions(),
-      refreshTrades()
-    ]);
-
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   POSITIONS
-========================= */
+/* POSITIONS */
 
 async function refreshPositions() {
   try {
-    const data = await api('/api/positions');
+    const data =
+      await api(
+        '/api/positions'
+      );
 
-    const positions = data.positions || [];
+    const positions =
+      data.positions || [];
 
-    $('positionCount').textContent =
+    $('positionCount')
+      .textContent =
       positions.length
         ? `${positions.length} OPEN`
         : '';
 
-    const list = $('positionsList');
+    const list =
+      $('positionsList');
 
     if (!positions.length) {
       list.innerHTML =
         '<p class="empty">No open positions.</p>';
+
       return;
     }
 
     list.innerHTML = '';
 
-    for (const p of positions) {
-      const div = document.createElement('div');
+    positions.forEach(p => {
+      const div =
+        document.createElement(
+          'div'
+        );
 
-      div.className = 'pos';
-
-      const pnl = p.unrealizedPnlUsd;
+      div.className =
+        'pos';
 
       const stale =
-        p.currentPriceUsd == null;
+        p.currentPriceUsd ==
+        null;
+
+      const pnl =
+        p.unrealizedPnlUsd;
 
       div.innerHTML = `
         <div class="pos-top">
-
           <div>
             <div class="pos-sym">
-              ${esc(p.symbol || p.tokenName || 'TOKEN')}
+              ${esc(
+                p.symbol ||
+                p.tokenName ||
+                'TOKEN'
+              )}
             </div>
 
             <div class="muted small">
-              ${esc(chainName(p.chain))}
+              ${esc(
+                chainName(
+                  p.chain
+                )
+              )}
             </div>
           </div>
 
           <div style="text-align:right">
-
             ${
               stale
                 ? '<span class="stale-badge">STALE</span>'
@@ -814,61 +791,82 @@ async function refreshPositions() {
               ${
                 stale
                   ? 'Price unavailable'
-                  : fmtPrice(p.currentPriceUsd)
+                  : fmtPrice(
+                      p.currentPriceUsd
+                    )
               }
             </div>
 
             <div class="muted small">
               ${
                 p.priceUpdatedAt
-                  ? 'updated ' + timeAgo(p.priceUpdatedAt)
+                  ? 'updated ' +
+                    timeAgo(
+                      p.priceUpdatedAt
+                    )
                   : ''
               }
             </div>
-
           </div>
-
         </div>
 
         <div class="pos-grid">
-
           <div>
-            <span class="label">ENTRY</span>
-            ${fmtPrice(p.entryPriceUsd)}
+            <span class="label">
+              ENTRY
+            </span>
+            ${fmtPrice(
+              p.entryPriceUsd
+            )}
           </div>
 
           <div>
-            <span class="label">INVESTED</span>
-            ${fmtUsd(p.investedUsd)}
+            <span class="label">
+              INVESTED
+            </span>
+            ${fmtUsd(
+              p.investedUsd
+            )}
           </div>
 
           <div>
-            <span class="label">QUANTITY</span>
-            ${fmtQty(p.quantity)}
+            <span class="label">
+              QUANTITY
+            </span>
+            ${fmtQty(
+              p.quantity
+            )}
           </div>
 
           <div>
-            <span class="label">VALUE</span>
+            <span class="label">
+              VALUE
+            </span>
             ${
               p.currentValueUsd != null
-                ? fmtUsd(p.currentValueUsd)
+                ? fmtUsd(
+                    p.currentValueUsd
+                  )
                 : '—'
             }
           </div>
-
         </div>
 
         <div class="pos-actions">
-
           <span
-            class="${pnlClass(pnl)}"
-            style="margin-right:10px"
+            class="${pnlClass(
+              pnl
+            )}"
           >
             ${
               pnl != null
-                ? signedUsd(pnl) +
+                ? signedUsd(
+                    pnl
+                  ) +
                   ' (' +
-                  fmtPct(p.unrealizedPnlPct) +
+                  fmtPct(
+                    p.unrealizedPnlPct
+                  ) +
                   ')'
                 : '—'
             }
@@ -877,349 +875,262 @@ async function refreshPositions() {
           <button class="btn sell">
             SELL
           </button>
-
         </div>
       `;
 
-      div.querySelector('.sell').onclick =
-        () => sell(p.id);
+      div.querySelector(
+        '.sell'
+      ).onclick =
+        () =>
+          sellPosition(
+            p.id
+          );
 
       list.appendChild(div);
-    }
-
-  } catch {
-    // Keep existing positions visible.
-  }
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
     });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
+  } catch (error) {
+    console.error(
+      'Positions:',
+      error
+    );
   }
 }
 
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   TRADE HISTORY
-========================= */
+/* TRADE HISTORY */
 
 async function refreshTrades() {
   try {
-    const data = await api('/api/trades');
+    const data =
+      await api(
+        '/api/trades'
+      );
 
-    const trades = data.trades || [];
+    const trades =
+      data.trades || [];
 
-    const list = $('tradesList');
+    const list =
+      $('tradesList');
 
     if (!trades.length) {
       list.innerHTML =
-        '<p class="empty">No closed trades yet.</p>';
+        '<p class="empty">No trades yet.</p>';
+
       return;
     }
 
     list.innerHTML = '';
 
-    for (const t of trades) {
-      const div = document.createElement('div');
+    trades.forEach(t => {
+      const div =
+        document.createElement(
+          'div'
+        );
 
-      div.className = 'trade';
+      div.className =
+        'trade';
+
+      const cls =
+        pnlClass(
+          t.pnlUsd
+        );
 
       div.innerHTML = `
         <div class="pos-top">
+          <div>
+            <div class="pos-sym">
+              ${esc(
+                t.symbol ||
+                t.tokenName ||
+                'TOKEN'
+              )}
+            </div>
 
-          <div class="pos-sym">
-            ${esc(t.symbol || t.tokenName || 'TOKEN')}
-
-            <span class="muted small">
-              ${esc(chainName(t.chain))}
-            </span>
+            <div class="muted small">
+              ${esc(
+                chainName(
+                  t.chain
+                )
+              )}
+              · ${esc(
+                t.side
+              )}
+            </div>
           </div>
 
           <div class="muted small">
-            ${
-              t.closedAt
-                ? new Date(
-                    t.closedAt * 1000
-                  ).toLocaleDateString()
-                : ''
-            }
+            ${esc(
+              t.createdAt
+            )}
           </div>
-
         </div>
 
         <div class="pos-grid">
-
           <div>
-            <span class="label">ENTRY</span>
-            ${fmtPrice(t.entryPriceUsd)}
+            <span class="label">
+              PRICE
+            </span>
+            ${fmtPrice(
+              t.priceUsd
+            )}
           </div>
 
           <div>
-            <span class="label">EXIT</span>
-            ${fmtPrice(t.exitPriceUsd)}
+            <span class="label">
+              QUANTITY
+            </span>
+            ${fmtQty(
+              t.quantity
+            )}
           </div>
 
           <div>
-            <span class="label">INVESTED</span>
-            ${fmtUsd(t.investedUsd)}
+            <span class="label">
+              VALUE
+            </span>
+            ${fmtUsd(
+              t.amountUsd
+            )}
           </div>
 
           <div>
-            <span class="label">EXIT VALUE</span>
-            ${fmtUsd(t.exitValueUsd)}
+            <span class="label">
+              P&L
+            </span>
+            <span class="${cls}">
+              ${
+                t.side === 'SELL'
+                  ? signedUsd(
+                      t.pnlUsd
+                    )
+                  : '—'
+              }
+            </span>
           </div>
-
-        </div>
-
-        <div class="${pnlClass(t.pnlUsd)}">
-          ${signedUsd(t.pnlUsd)}
-          (${fmtPct(t.pnlPct)})
         </div>
       `;
 
       list.appendChild(div);
-    }
-
-  } catch {
-    // Ignore refresh errors.
+    });
+  } catch (error) {
+    console.error(
+      'Trades:',
+      error
+    );
   }
 }
 
+/* DEPOSIT / WITHDRAW */
 
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
+async function changeBalance(
+  type
+) {
+  const title =
+    type === 'deposit'
+      ? 'Enter deposit amount in USD:'
+      : 'Enter withdrawal amount in USD:';
 
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
+  const input =
+    prompt(title);
 
-  if (value === null) return;
+  if (input === null) {
+    return;
+  }
 
-  const amount = Number(value);
+  const amount =
+    Number(input);
 
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    alert(
+      'Enter a valid amount.'
+    );
+
     return;
   }
 
   try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
+    await api(
+      '/api/' + type,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          amountUsd:
+            amount
+        })
+      }
+    );
 
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
+    await refreshAll();
+  } catch (error) {
+    alert(
+      error.message
+    );
   }
 }
+
+/* RESET */
 
 async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   DEPOSIT / WITHDRAW
-========================= */
-
-async function deposit() {
-  const amount = prompt(
-    'Enter amount to deposit into your paper account (USD):'
-  );
-
-  if (amount === null) return;
-
-  const value = Number(amount);
-
-  if (!Number.isFinite(value) || value <= 0) {
-    alert('Enter a valid amount.');
+  if (
+    !confirm(
+      'Reset the paper account to $10,000 and delete all positions and trade history?'
+    )
+  ) {
     return;
   }
 
   try {
-    await api('/api/deposit', {
-      method: 'POST',
-      body: JSON.stringify({
-        amountUsd: value
-      })
-    });
+    await api(
+      '/api/reset',
+      {
+        method: 'POST'
+      }
+    );
 
-    await refreshWallet();
+    currentToken =
+      null;
 
-  } catch (e) {
-    alert(e.message);
+    hide('tokenCard');
+
+    await refreshAll();
+  } catch (error) {
+    alert(
+      error.message
+    );
   }
 }
 
-async function withdraw() {
-  const amount = prompt(
-    'Enter amount to withdraw from your paper account (USD):'
-  );
-
-  if (amount === null) return;
-
-  const value = Number(amount);
-
-  if (!Number.isFinite(value) || value <= 0) {
-    alert('Enter a valid amount.');
-    return;
-  }
-
-  try {
-    await api('/api/withdraw', {
-      method: 'POST',
-      body: JSON.stringify({
-        amountUsd: value
-      })
-    });
-
-    await refreshWallet();
-
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
+/* COPY */
 
 async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
+  if (
+    !currentToken ||
+    !currentToken.address
+  ) {
+    return;
   }
-}
-
-/* =========================
-   COPY ADDRESS
-========================= */
-
-async function copyAddress() {
-  if (!currentToken || !currentToken.address) return;
 
   try {
     await navigator.clipboard.writeText(
       currentToken.address
     );
 
-    const button = $('copyAddressBtn');
+    const button =
+      $('copyAddressBtn');
 
-    button.textContent = 'COPIED';
+    button.textContent =
+      'COPIED';
 
-    setTimeout(() => {
-      button.textContent = 'COPY';
-    }, 1500);
-
-  } catch {
+    setTimeout(
+      () => {
+        button.textContent =
+          'COPY';
+      },
+      1500
+    );
+  } catch (_) {
     prompt(
       'Copy token address:',
       currentToken.address
@@ -1227,340 +1138,62 @@ async function copyAddress() {
   }
 }
 
+/* REFRESH */
 
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
+async function refreshAll() {
+  await Promise.all([
+    refreshWallet(),
+    refreshPositions(),
+    refreshTrades()
+  ]);
 }
 
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
+/* EVENTS */
 
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
+$('loadBtn').onclick =
+  loadToken;
 
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   RESET
-========================= */
-
-async function reset() {
-  if (!confirm(
-    'Reset your paper account?\n\n' +
-    'This will delete open positions and trade history.'
-  )) {
-    return;
-  }
-
-  if (!confirm(
-    'Are you absolutely sure? This cannot be undone.'
-  )) {
-    return;
-  }
-
-  try {
-    await api('/api/reset', {
-      method: 'POST'
-    });
-
-    currentToken = null;
-
-    hide('tokenCard');
-
-    await Promise.all([
-      refreshWallet(),
-      refreshPositions(),
-      refreshTrades()
-    ]);
-
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   POLLING
-========================= */
-
-async function pollPrices() {
-  await refreshCurrentToken();
-  await refreshPositions();
-  await refreshWallet();
-}
-
-
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   EVENTS
-========================= */
-
-$('loadBtn').onclick = loadToken;
-
-$('tokenInput').addEventListener(
-  'keydown',
-  e => {
-    if (e.key === 'Enter') {
-      loadToken();
+$('tokenInput')
+  .addEventListener(
+    'keydown',
+    event => {
+      if (
+        event.key === 'Enter'
+      ) {
+        loadToken();
+      }
     }
-  }
-);
+  );
 
-$('buyBtn').onclick = buy;
+$('buyBtn').onclick =
+  buyToken;
 
-$('depositBtn').onclick = deposit;
+$('depositBtn').onclick =
+  () =>
+    changeBalance(
+      'deposit'
+    );
 
-$('withdrawBtn').onclick = withdraw;
+$('withdrawBtn').onclick =
+  () =>
+    changeBalance(
+      'withdraw'
+    );
 
-$('copyAddressBtn').onclick = copyAddress;
+$('resetBtn').onclick =
+  resetAccount;
 
-$('resetBtn').onclick = reset;
+$('copyAddressBtn').onclick =
+  copyAddress;
 
+/* START */
 
-/* =========================
-   ACCOUNT ACTIONS
-========================= */
-
-async function changeBalance(type) {
-  const label = type === "deposit" ? "Deposit amount in USD:" : "Withdraw amount in USD:";
-  const value = prompt(label);
-
-  if (value === null) return;
-
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert("Enter a valid amount.");
-    return;
-  }
-
-  try {
-    await api("/api/" + type, {
-      method: "POST",
-      body: JSON.stringify({ amountUsd: amount })
-    });
-
-    await refreshWallet();
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function resetAccount() {
-  if (!confirm("Reset the paper account to $10,000 and delete all positions and history?")) return;
-
-  try {
-    await api("/api/reset", { method: "POST" });
-    await Promise.all([refreshWallet(), refreshPositions(), refreshTrades()]);
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-async function copyAddress() {
-  if (!currentToken) return;
-
-  try {
-    await navigator.clipboard.writeText(currentToken.address);
-    $("copyAddressBtn").textContent = "COPIED";
-    setTimeout(() => $("copyAddressBtn").textContent = "COPY", 1500);
-  } catch (_) {
-    alert(currentToken.address);
-  }
-}
-
-/* =========================
-   INITIAL LOAD
-========================= */
-
-refreshWallet();
-refreshPositions();
-refreshTrades();
+refreshAll();
 
 setInterval(
-  pollPrices,
+  async () => {
+    await refreshCurrentToken();
+    await refreshAll();
+  },
   POLL_MS
 );
-
-if ($('depositBtn')) {
-  $('depositBtn').onclick = () => changeBalance('deposit');
-}
-
-if ($('withdrawBtn')) {
-  $('withdrawBtn').onclick = () => changeBalance('withdraw');
-}
-
-if ($('resetBtn')) {
-  $('resetBtn').onclick = resetAccount;
-}
-
-if ($('copyAddressBtn')) {
-  $('copyAddressBtn').onclick = copyAddress;
-}
-
-if ($('loadBtn')) {
-  $('loadBtn').onclick = loadToken;
-}
-
-if ($('tokenInput')) {
-  $('tokenInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') loadToken();
-  });
-}
-
-if ($('buyBtn')) {
-  $('buyBtn').onclick = buy;
-}
-
-refreshWallet();
-refreshPositions();
-refreshTrades();
-
-setInterval(async () => {
-  await refreshWallet();
-  await refreshPositions();
-  await refreshCurrentToken();
-}, POLL_MS);

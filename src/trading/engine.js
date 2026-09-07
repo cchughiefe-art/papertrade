@@ -7,50 +7,40 @@ const {
   STARTING_BALANCE
 } = require('../database/db');
 
-function cents(n) {
+function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
-function walletSummary(sessionId, solPriceUsd = null) {
-  const wallet = getOrCreateWallet(sessionId);
-
-  const positions = getPositions(sessionId);
-
-  const positionValueUsd = positions.reduce(
-    (sum, p) => sum + Number(p.investedUsd || 0),
-    0
-  );
-
-  const cashUsd = Number(wallet.cash_usd || 0);
-  const equityUsd = cashUsd + positionValueUsd;
-
-  const sol =
-    Number.isFinite(Number(solPriceUsd)) &&
-    Number(solPriceUsd) > 0
-      ? {
-          priceUsd: Number(solPriceUsd),
-          cashSol:
-            cashUsd / Number(solPriceUsd),
-          equitySol:
-            equityUsd / Number(solPriceUsd)
-        }
-      : {
-          priceUsd: null,
-          cashSol: null,
-          equitySol: null
-        };
-
-  return {
-    cashUsd,
-    positionValueUsd,
-    equityUsd,
-    totalPnlUsd: 0,
-    startingBalanceUsd: STARTING_BALANCE,
-    ...sol
-  };
+function getPositions(sessionId) {
+  return db.prepare(`
+    SELECT *
+    FROM positions
+    WHERE session_id = ?
+    ORDER BY id DESC
+  `).all(sessionId).map(row => ({
+    id: row.id,
+    sessionId: row.session_id,
+    chain: row.chain,
+    tokenAddress: row.token_address,
+    tokenName: row.token_name,
+    symbol: row.symbol,
+    entryPriceUsd: Number(row.entry_price_usd),
+    quantity: Number(row.quantity),
+    investedUsd: Number(row.invested_usd),
+    openedAt: row.opened_at
+  }));
 }
 
-function mapPosition(row) {
+function getPosition(sessionId, id) {
+  const row = db.prepare(`
+    SELECT *
+    FROM positions
+    WHERE session_id = ?
+      AND id = ?
+  `).get(sessionId, id);
+
+  if (!row) return null;
+
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -65,8 +55,13 @@ function mapPosition(row) {
   };
 }
 
-function mapTrade(row) {
-  return {
+function getTrades(sessionId) {
+  return db.prepare(`
+    SELECT *
+    FROM trades
+    WHERE session_id = ?
+    ORDER BY id DESC
+  `).all(sessionId).map(row => ({
     id: row.id,
     sessionId: row.session_id,
     chain: row.chain,
@@ -79,36 +74,64 @@ function mapTrade(row) {
     amountUsd: Number(row.amount_usd),
     pnlUsd: Number(row.pnl_usd || 0),
     createdAt: row.created_at
+  }));
+}
+
+function walletSummary(
+  sessionId,
+  solPriceUsd = null,
+  valuation = {}
+) {
+  const wallet = getOrCreateWallet(sessionId);
+
+  const cashUsd =
+    Number(wallet.cash_usd || 0);
+
+  const positionValueUsd =
+    Number(valuation.positionValueUsd || 0);
+
+  const unrealizedPnlUsd =
+    Number(valuation.unrealizedPnlUsd || 0);
+
+  const realizedPnlUsd =
+    Number(valuation.realizedPnlUsd || 0);
+
+  const equityUsd =
+    cashUsd + positionValueUsd;
+
+  const solPrice =
+    Number(solPriceUsd);
+
+  const equitySol =
+    Number.isFinite(solPrice) &&
+    solPrice > 0
+      ? equityUsd / solPrice
+      : null;
+
+  const cashSol =
+    Number.isFinite(solPrice) &&
+    solPrice > 0
+      ? cashUsd / solPrice
+      : null;
+
+  return {
+    cashUsd,
+    positionValueUsd,
+    equityUsd,
+    realizedPnlUsd,
+    unrealizedPnlUsd,
+    totalPnlUsd:
+      realizedPnlUsd + unrealizedPnlUsd,
+    startingBalanceUsd:
+      STARTING_BALANCE,
+    solPriceUsd:
+      Number.isFinite(solPrice) && solPrice > 0
+        ? solPrice
+        : null,
+    cashSol,
+    equitySol,
+    updatedAt: Date.now()
   };
-}
-
-function getPositions(sessionId) {
-  return db.prepare(`
-    SELECT *
-    FROM positions
-    WHERE session_id = ?
-    ORDER BY id DESC
-  `).all(sessionId).map(mapPosition);
-}
-
-function getPosition(sessionId, id) {
-  const row = db.prepare(`
-    SELECT *
-    FROM positions
-    WHERE session_id = ?
-      AND id = ?
-  `).get(sessionId, id);
-
-  return row ? mapPosition(row) : null;
-}
-
-function getTrades(sessionId) {
-  return db.prepare(`
-    SELECT *
-    FROM trades
-    WHERE session_id = ?
-    ORDER BY id DESC
-  `).all(sessionId).map(mapTrade);
 }
 
 function buy(sessionId, data) {
@@ -123,22 +146,26 @@ function buy(sessionId, data) {
     throw new Error('Invalid token price');
   }
 
-  const wallet = getOrCreateWallet(sessionId);
+  const wallet =
+    getOrCreateWallet(sessionId);
 
   if (wallet.cash_usd < amountUsd) {
     throw new Error('Insufficient paper cash');
   }
 
-  const quantity = amountUsd / priceUsd;
+  const quantity =
+    amountUsd / priceUsd;
 
   const transaction = db.transaction(() => {
     updateCash(
       sessionId,
-      cents(wallet.cash_usd - amountUsd)
+      roundMoney(
+        wallet.cash_usd - amountUsd
+      )
     );
 
     db.prepare(`
-      INSERT INTO positions(
+      INSERT INTO positions (
         session_id,
         chain,
         token_address,
@@ -161,7 +188,7 @@ function buy(sessionId, data) {
     );
 
     db.prepare(`
-      INSERT INTO trades(
+      INSERT INTO trades (
         session_id,
         chain,
         token_address,
@@ -192,7 +219,8 @@ function buy(sessionId, data) {
 }
 
 function sell(sessionId, positionId, priceUsd) {
-  const position = getPosition(sessionId, positionId);
+  const position =
+    getPosition(sessionId, positionId);
 
   if (!position) {
     throw new Error('Position not found');
@@ -216,11 +244,13 @@ function sell(sessionId, positionId, priceUsd) {
   const transaction = db.transaction(() => {
     updateCash(
       sessionId,
-      cents(wallet.cash_usd + proceeds)
+      roundMoney(
+        wallet.cash_usd + proceeds
+      )
     );
 
     db.prepare(`
-      INSERT INTO trades(
+      INSERT INTO trades (
         session_id,
         chain,
         token_address,
@@ -249,7 +279,10 @@ function sell(sessionId, positionId, priceUsd) {
       DELETE FROM positions
       WHERE session_id = ?
         AND id = ?
-    `).run(sessionId, positionId);
+    `).run(
+      sessionId,
+      positionId
+    );
   });
 
   transaction();
@@ -257,7 +290,8 @@ function sell(sessionId, positionId, priceUsd) {
   return {
     proceeds,
     pnlUsd: pnl,
-    wallet: getOrCreateWallet(sessionId)
+    wallet:
+      getOrCreateWallet(sessionId)
   };
 }
 
@@ -282,32 +316,33 @@ function getBalanceHistory(sessionId) {
 }
 
 function reset(sessionId) {
-  const transaction = db.transaction(() => {
-    db.prepare(`
-      DELETE FROM positions
-      WHERE session_id = ?
-    `).run(sessionId);
+  const transaction =
+    db.transaction(() => {
+      db.prepare(`
+        DELETE FROM positions
+        WHERE session_id = ?
+      `).run(sessionId);
 
-    db.prepare(`
-      DELETE FROM trades
-      WHERE session_id = ?
-    `).run(sessionId);
+      db.prepare(`
+        DELETE FROM trades
+        WHERE session_id = ?
+      `).run(sessionId);
 
-    db.prepare(`
-      DELETE FROM balance_transactions
-      WHERE session_id = ?
-    `).run(sessionId);
+      db.prepare(`
+        DELETE FROM balance_transactions
+        WHERE session_id = ?
+      `).run(sessionId);
 
-    db.prepare(`
-      UPDATE wallets
-      SET cash_usd = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE session_id = ?
-    `).run(
-      STARTING_BALANCE,
-      sessionId
-    );
-  });
+      db.prepare(`
+        UPDATE wallets
+        SET cash_usd = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = ?
+      `).run(
+        STARTING_BALANCE,
+        sessionId
+      );
+    });
 
   transaction();
 
