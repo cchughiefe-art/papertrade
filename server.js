@@ -680,6 +680,18 @@ app.get(
             unrealizedPnlPct:
               item.unrealizedPnlPct,
 
+            marketCapUsd:
+              item.price?.marketCapUsd ??
+              null,
+
+            liquidityUsd:
+              item.price?.liquidityUsd ??
+              null,
+
+            volume24hUsd:
+              item.price?.volume24hUsd ??
+              null,
+
             priceUpdatedAt:
               item.price?.updatedAt ??
               null,
