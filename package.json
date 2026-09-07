@@ -1,0 +1,17 @@
+{
+  "name": "papertrade",
+  "version": "1.0.0",
+  "description": "Multi-chain paper trading simulator using real market prices. No real funds, no wallets, no transactions.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
+  }
+}
