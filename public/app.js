@@ -1279,7 +1279,7 @@ buyToken = function () {
 
 sellPosition = async function (positionId) {
   try {
-    const d = await api('/api/positions/' + encodeURIComponent(positionId));
+    const d = await api('/api/position/' + encodeURIComponent(positionId));
     const p = d.position || d;
     const owned = Number(p.quantity);
     const price = Number(p.currentPriceUsd);
