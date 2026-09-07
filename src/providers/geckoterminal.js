@@ -15,7 +15,7 @@ const NETWORKS = {
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: {
-      accept: 'application/json',
+      accept: 'application/json;version=20230203',
       'user-agent': 'PaperTrade/1.0'
     }
   });
@@ -27,10 +27,13 @@ async function fetchJson(url) {
   return res.json();
 }
 
-function normalize(item, network, address) {
-  const a = item?.attributes || {};
+function normalize(pool, network, address) {
+  const a = pool?.attributes || {};
 
-  const price = Number(a.base_token_price_usd || a.quote_token_price_usd);
+  const price = Number(
+    a.base_token_price_usd ||
+    a.quote_token_price_usd
+  );
 
   if (!Number.isFinite(price) || price <= 0) {
     return null;
@@ -38,24 +41,47 @@ function normalize(item, network, address) {
 
   return {
     chain: network,
-    address: address || item?.relationships?.base_token?.data?.id?.split('_').pop(),
+    address:
+      address ||
+      pool?.relationships?.base_token?.data?.id
+        ?.split('_')
+        .pop(),
     name: a.name || 'Unknown Token',
     symbol: a.symbol || 'UNKNOWN',
     priceUsd: price,
-    marketCapUsd: Number(a.market_cap_usd || a.fdv_usd || 0) || 0,
-    liquidityUsd: Number(a.reserve_in_usd || 0) || 0,
-    volume24hUsd: Number(a.volume_usd?.h24 || 0) || 0,
-    priceChange24h: Number(a.price_change_percentage?.h24 || 0) || 0,
-    pairAddress: item?.id?.split('_').pop() || null,
+    marketCapUsd:
+      Number(
+        a.market_cap_usd ||
+        a.fdv_usd ||
+        0
+      ) || 0,
+    liquidityUsd:
+      Number(
+        a.reserve_in_usd ||
+        a.total_reserve_in_usd ||
+        0
+      ) || 0,
+    volume24hUsd:
+      Number(a.volume_usd?.h24 || 0) || 0,
+    priceChange24h:
+      Number(
+        a.price_change_percentage?.h24 || 0
+      ) || 0,
+    pairAddress:
+      a.address ||
+      pool?.id?.split('_').pop() ||
+      null,
     dex: 'GeckoTerminal',
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    priceAvailable: true
   };
 }
 
 async function resolveToken(address, chainHint = null) {
-  const networks = chainHint && NETWORKS[chainHint]
-    ? [chainHint]
-    : Object.keys(NETWORKS);
+  const networks =
+    chainHint && NETWORKS[chainHint]
+      ? [chainHint]
+      : Object.keys(NETWORKS);
 
   for (const chain of networks) {
     const network = NETWORKS[chain];
@@ -65,22 +91,23 @@ async function resolveToken(address, chainHint = null) {
         `${BASE_URL}/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`;
 
       const data = await fetchJson(url);
-      const pools = Array.isArray(data.data) ? data.data : [];
 
-      const normalized = pools
-        .map(item => normalize(item, chain, address))
+      const pools = Array.isArray(data.data)
+        ? data.data
+        : [];
+
+      const result = pools
+        .map(pool =>
+          normalize(pool, chain, address)
+        )
         .filter(Boolean)
-        .sort((a, b) => {
-          if (b.liquidityUsd !== a.liquidityUsd) {
-            return b.liquidityUsd - a.liquidityUsd;
-          }
+        .sort(
+          (a, b) =>
+            b.liquidityUsd - a.liquidityUsd ||
+            b.volume24hUsd - a.volume24hUsd
+        )[0];
 
-          return b.volume24hUsd - a.volume24hUsd;
-        });
-
-      if (normalized[0]) {
-        return normalized[0];
-      }
+      if (result) return result;
     } catch (_) {}
   }
 

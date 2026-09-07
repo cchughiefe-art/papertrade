@@ -1,9 +1,9 @@
-const BASE_URL = process.env.DEXSCREENER_BASE_URL || 'https://api.dexscreener.com/latest/dex';
+const BASE_URL = process.env.DEXSCREENER_BASE_URL || 'https://api.dexscreener.com';
 
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: {
-      'accept': 'application/json',
+      accept: 'application/json',
       'user-agent': 'PaperTrade/1.0'
     }
   });
@@ -15,119 +15,154 @@ async function fetchJson(url) {
   return res.json();
 }
 
-function normalizePair(pair) {
+function normalizePair(pair, targetAddress) {
   if (!pair) return null;
 
+  const target = String(targetAddress || '').toLowerCase();
   const base = pair.baseToken || {};
-  const price = Number(pair.priceUsd);
+  const quote = pair.quoteToken || {};
 
-  if (!base.address || !Number.isFinite(price) || price <= 0) {
+  const baseMatch =
+    String(base.address || '').toLowerCase() === target;
+
+  const quoteMatch =
+    String(quote.address || '').toLowerCase() === target;
+
+  let token = base;
+  let price = Number(pair.priceUsd);
+
+  if (quoteMatch && !baseMatch) {
+    const basePrice = Number(pair.priceUsd);
+    const priceNative = Number(pair.priceNative);
+
+    if (
+      Number.isFinite(basePrice) &&
+      basePrice > 0 &&
+      Number.isFinite(priceNative) &&
+      priceNative > 0
+    ) {
+      price = basePrice / priceNative;
+    }
+
+    token = quote;
+  }
+
+  if (
+    !token.address ||
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
     return null;
   }
 
   return {
     chain: pair.chainId || null,
-    address: base.address,
-    name: base.name || 'Unknown Token',
-    symbol: base.symbol || 'UNKNOWN',
+    address: token.address,
+    name: token.name || 'Unknown Token',
+    symbol: token.symbol || 'UNKNOWN',
     priceUsd: price,
-    marketCapUsd: Number(pair.marketCap || pair.fdv || 0) || 0,
-    liquidityUsd: Number(pair.liquidity?.usd || 0) || 0,
-    volume24hUsd: Number(pair.volume?.h24 || 0) || 0,
-    priceChange24h: Number(pair.priceChange?.h24 || 0) || 0,
+    marketCapUsd:
+      Number(pair.marketCap || pair.fdv || 0) || 0,
+    liquidityUsd:
+      Number(pair.liquidity?.usd || 0) || 0,
+    volume24hUsd:
+      Number(pair.volume?.h24 || 0) || 0,
+    priceChange24h:
+      Number(pair.priceChange?.h24 || 0) || 0,
     pairAddress: pair.pairAddress || null,
     dex: pair.dexId || null,
     url: pair.url || null,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    priceAvailable: true
   };
 }
 
-function bestPair(pairs) {
-  if (!Array.isArray(pairs) || !pairs.length) return null;
+function bestPair(pairs, address) {
+  if (!Array.isArray(pairs)) return null;
 
-  const valid = pairs
-    .map(normalizePair)
-    .filter(Boolean);
-
-  valid.sort((a, b) => {
-    if (b.liquidityUsd !== a.liquidityUsd) {
-      return b.liquidityUsd - a.liquidityUsd;
-    }
-
-    return b.volume24hUsd - a.volume24hUsd;
-  });
-
-  return valid[0] || null;
+  return pairs
+    .map(pair => normalizePair(pair, address))
+    .filter(Boolean)
+    .sort(
+      (a, b) =>
+        b.liquidityUsd - a.liquidityUsd ||
+        b.volume24hUsd - a.volume24hUsd
+    )[0] || null;
 }
 
-async function resolveToken(address) {
+async function resolveToken(address, chainHint = null) {
   const clean = String(address || '').trim();
 
   if (!clean) return null;
 
-  // Exact token lookup.
+  /*
+   * Exact chain lookup.
+   * This is especially important for Solana/Pump.fun tokens.
+   */
+  if (chainHint) {
+    try {
+      const data = await fetchJson(
+        `${BASE_URL}/tokens/v1/${encodeURIComponent(chainHint)}/${encodeURIComponent(clean)}`
+      );
+
+      const result = bestPair(data, clean);
+
+      if (result) return result;
+    } catch (_) {}
+  }
+
+  /*
+   * Search fallback.
+   * Useful for freshly listed meme coins.
+   */
   try {
     const data = await fetchJson(
-      `${BASE_URL}/tokens/${encodeURIComponent(clean)}`
+      `${BASE_URL}/latest/dex/search?q=${encodeURIComponent(clean)}`
     );
 
-    const result = bestPair(data.pairs);
+    const pairs = Array.isArray(data.pairs)
+      ? data.pairs
+      : [];
+
+    const exact = pairs.filter(pair => {
+      const base =
+        String(pair.baseToken?.address || '').toLowerCase();
+
+      const quote =
+        String(pair.quoteToken?.address || '').toLowerCase();
+
+      return (
+        base === clean.toLowerCase() ||
+        quote === clean.toLowerCase()
+      );
+    });
+
+    const result = bestPair(
+      exact.length ? exact : pairs,
+      clean
+    );
 
     if (result) return result;
   } catch (_) {}
 
-  // Search endpoint catches tokens that are not returned by /tokens/:address.
+  /*
+   * Legacy fallback.
+   */
   try {
     const data = await fetchJson(
-      `${BASE_URL}/search/?q=${encodeURIComponent(clean)}`
+      `${BASE_URL}/latest/dex/tokens/${encodeURIComponent(clean)}`
     );
 
-    const pairs = Array.isArray(data.pairs) ? data.pairs : [];
+    const result = bestPair(data.pairs, clean);
 
-    const exact = pairs.filter(pair => {
-      const base = pair.baseToken?.address || '';
-      const quote = pair.quoteToken?.address || '';
-
-      return (
-        base.toLowerCase() === clean.toLowerCase() ||
-        quote.toLowerCase() === clean.toLowerCase()
-      );
-    });
-
-    const result = bestPair(exact.length ? exact : pairs);
-
-    if (result) {
-      // If the searched address was the quote token, normalize to it.
-      const pair = pairs.find(p =>
-        (p.baseToken?.address || '').toLowerCase() === clean.toLowerCase() ||
-        (p.quoteToken?.address || '').toLowerCase() === clean.toLowerCase()
-      );
-
-      if (pair) {
-        const normalized = normalizePair(pair);
-
-        if (
-          pair.quoteToken?.address?.toLowerCase() === clean.toLowerCase() &&
-          pair.baseToken?.address?.toLowerCase() !== clean.toLowerCase()
-        ) {
-          return {
-            ...result,
-            address: clean
-          };
-        }
-
-        return normalized || result;
-      }
-
-      return result;
-    }
+    if (result) return result;
   } catch (_) {}
 
   return null;
 }
 
-async function getPrice(address) {
-  return resolveToken(address);
+async function getPrice(address, chainHint = null) {
+  return resolveToken(address, chainHint);
 }
 
 module.exports = {

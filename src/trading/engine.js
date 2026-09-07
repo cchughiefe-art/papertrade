@@ -16,21 +16,23 @@ function walletSummary(sessionId, solPriceUsd = null) {
 
   const positions = getPositions(sessionId);
 
-  let positionValueUsd = 0;
-
-  for (const p of positions) {
-    positionValueUsd += Number(p.investedUsd || 0);
-  }
+  const positionValueUsd = positions.reduce(
+    (sum, p) => sum + Number(p.investedUsd || 0),
+    0
+  );
 
   const cashUsd = Number(wallet.cash_usd || 0);
   const equityUsd = cashUsd + positionValueUsd;
 
   const sol =
-    Number.isFinite(Number(solPriceUsd)) && Number(solPriceUsd) > 0
+    Number.isFinite(Number(solPriceUsd)) &&
+    Number(solPriceUsd) > 0
       ? {
           priceUsd: Number(solPriceUsd),
-          cashSol: cashUsd / Number(solPriceUsd),
-          equitySol: equityUsd / Number(solPriceUsd)
+          cashSol:
+            cashUsd / Number(solPriceUsd),
+          equitySol:
+            equityUsd / Number(solPriceUsd)
         }
       : {
           priceUsd: null,
@@ -81,14 +83,12 @@ function mapTrade(row) {
 }
 
 function getPositions(sessionId) {
-  const rows = db.prepare(`
+  return db.prepare(`
     SELECT *
     FROM positions
     WHERE session_id = ?
     ORDER BY id DESC
-  `).all(sessionId);
-
-  return rows.map(mapPosition);
+  `).all(sessionId).map(mapPosition);
 }
 
 function getPosition(sessionId, id) {
@@ -103,14 +103,12 @@ function getPosition(sessionId, id) {
 }
 
 function getTrades(sessionId) {
-  const rows = db.prepare(`
+  return db.prepare(`
     SELECT *
     FROM trades
     WHERE session_id = ?
     ORDER BY id DESC
-  `).all(sessionId);
-
-  return rows.map(mapTrade);
+  `).all(sessionId).map(mapTrade);
 }
 
 function buy(sessionId, data) {
@@ -206,12 +204,14 @@ function sell(sessionId, positionId, priceUsd) {
     throw new Error('Invalid sell price');
   }
 
-  const proceeds = position.quantity * price;
+  const proceeds =
+    position.quantity * price;
 
   const pnl =
     proceeds - position.investedUsd;
 
-  const wallet = getOrCreateWallet(sessionId);
+  const wallet =
+    getOrCreateWallet(sessionId);
 
   const transaction = db.transaction(() => {
     updateCash(
@@ -262,11 +262,19 @@ function sell(sessionId, positionId, priceUsd) {
 }
 
 function deposit(sessionId, amountUsd) {
-  return addBalance(sessionId, 'deposit', amountUsd);
+  return addBalance(
+    sessionId,
+    'deposit',
+    amountUsd
+  );
 }
 
 function withdraw(sessionId, amountUsd) {
-  return addBalance(sessionId, 'withdrawal', amountUsd);
+  return addBalance(
+    sessionId,
+    'withdrawal',
+    amountUsd
+  );
 }
 
 function getBalanceHistory(sessionId) {
@@ -295,7 +303,10 @@ function reset(sessionId) {
       SET cash_usd = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE session_id = ?
-    `).run(STARTING_BALANCE, sessionId);
+    `).run(
+      STARTING_BALANCE,
+      sessionId
+    );
   });
 
   transaction();
