@@ -1060,9 +1060,6 @@ $('tokenInput')
     }
   );
 
-$('buyBtn').onclick =
-  buyToken;
-
 $('depositBtn').onclick =
   () =>
     changeBalance(
@@ -1074,9 +1071,6 @@ $('withdrawBtn').onclick =
     changeBalance(
       'withdraw'
     );
-
-$('resetBtn').onclick =
-  resetAccount;
 
 $('copyAddressBtn').onclick =
   copyAddress;

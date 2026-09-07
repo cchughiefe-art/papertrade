@@ -13,36 +13,24 @@ function key(chain, address) {
 
 function getCached(k) {
   const item = cache.get(k);
-
   if (!item) return null;
-
   if (Date.now() > item.expires) {
     cache.delete(k);
     return null;
   }
-
   return item.value;
 }
 
 function setCached(k, value, ttl) {
-  cache.set(k, {
-    value,
-    expires: Date.now() + ttl
-  });
-
+  cache.set(k, { value, expires: Date.now() + ttl });
   if (cache.size > 2000) {
     const first = cache.keys().next().value;
-
     if (first) cache.delete(first);
   }
 }
 
 function isUsablePrice(value) {
-  return (
-    value &&
-    Number.isFinite(Number(value.priceUsd)) &&
-    Number(value.priceUsd) > 0
-  );
+  return value && Number.isFinite(Number(value.priceUsd)) && Number(value.priceUsd) > 0;
 }
 
 async function resolveToken(chain, address) {
@@ -72,10 +60,8 @@ async function resolveToken(chain, address) {
 
   for (const provider of providers) {
     const token = await provider();
-
     if (token && typeof token === 'object') {
       const price = Number(token.priceUsd);
-
       return {
         ...token,
         priceUsd: Number.isFinite(price) && price > 0 ? price : 0,
@@ -90,26 +76,16 @@ async function resolveToken(chain, address) {
 async function getPrice(chain, address) {
   const k = key(chain, address);
   const cached = getCached(k);
-
-  if (isUsablePrice(cached)) {
-    return cached;
-  }
+  if (isUsablePrice(cached)) return cached;
 
   let result = null;
-
   try {
-    result = await dexscreener.getPrice(
-      address,
-      chain
-    );
+    result = await dexscreener.getPrice(address, chain);
   } catch (_) {}
 
   if (!isUsablePrice(result)) {
     try {
-      result = await gecko.getPrice(
-        address,
-        chain
-      );
+      result = await gecko.getPrice(address, chain);
     } catch (_) {}
   }
 
@@ -117,23 +93,16 @@ async function getPrice(chain, address) {
     setCached(k, result, PRICE_TTL);
     return result;
   }
-
   return null;
 }
 
 async function searchTokens(query) {
   const clean = String(query || '').trim();
-
   if (!clean) return [];
 
-  const cacheKey =
-    `search:${clean.toLowerCase()}`;
-
+  const cacheKey = `search:${clean.toLowerCase()}`;
   const cached = getCached(cacheKey);
-
-  if (Array.isArray(cached)) {
-    return cached;
-  }
+  if (Array.isArray(cached)) return cached;
 
   let results = null;
   let providerError = null;
@@ -145,44 +114,23 @@ async function searchTokens(query) {
   }
 
   if (providerError) {
-    throw new Error(
-      'Token search provider is temporarily unavailable'
-    );
+    throw new Error('Token search provider is temporarily unavailable');
   }
 
-  const usable =
-    Array.isArray(results)
-      ? results.filter(item =>
-          item &&
-          item.chain &&
-          item.address &&
-          item.name &&
-          item.symbol
-        )
-      : [];
+  const usable = Array.isArray(results)
+    ? results.filter(item => item && item.chain && item.address && item.name && item.symbol)
+    : [];
 
-  setCached(
-    cacheKey,
-    usable,
-    5000
-  );
-
+  setCached(cacheKey, usable, 5000);
   return usable;
 }
 
 async function getSolPrice() {
-  const solMint =
-    'So11111111111111111111111111111111111111112';
-
-  const result = await getPrice(
-    'solana',
-    solMint
-  );
-
+  const solMint = 'So11111111111111111111111111111111111111112';
+  const result = await getPrice('solana', solMint);
   if (!isUsablePrice(result)) {
     throw new Error('Unable to get SOL price');
   }
-
   return Number(result.priceUsd);
 }
 
