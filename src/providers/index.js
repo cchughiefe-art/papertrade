@@ -8,7 +8,7 @@ const TOKEN_TTL = 30000;
 const MISS_TTL = 5000;
 
 function key(chain, address) {
-  return `${chain || 'auto'}:${String(address).toLowerCase()}`;
+  return `\( {chain || 'auto'}: \){String(address).toLowerCase()}`;
 }
 
 function getCached(k) {
@@ -63,14 +63,7 @@ async function resolveToken(chain, address) {
     },
     async () => {
       try {
-        return await geckoterminal.resolveToken(cleanChain, cleanAddress);
-      } catch (_) {
-        return null;
-      }
-    },
-    async () => {
-      try {
-        return await pumpfun.resolveToken(cleanChain, cleanAddress);
+        return await gecko.resolveToken(cleanChain, cleanAddress);
       } catch (_) {
         return null;
       }

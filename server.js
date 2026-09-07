@@ -945,21 +945,20 @@ app.post(
         });
       }
 
-      const token =
+      const rawPrice =
         await getPrice(
           chain,
           address
         );
 
-      if (
-        !token ||
-        !validPositiveNumber(
-          token.priceUsd
-        )
-      ) {
+      let token;
+      try {
+        token = requireFreshPrice(rawPrice);
+      } catch (error) {
         return res.status(503).json({
           ok: false,
           error:
+            error.message ||
             'Live price unavailable for this token'
         });
       }
@@ -1134,21 +1133,20 @@ app.post(
         });
       }
 
-      const token =
+      const rawPrice =
         await getPrice(
           position.chain,
           position.tokenAddress
         );
 
-      if (
-        !token ||
-        !validPositiveNumber(
-          token.priceUsd
-        )
-      ) {
+      let token;
+      try {
+        token = requireFreshPrice(rawPrice);
+      } catch (error) {
         return res.status(503).json({
           ok: false,
           error:
+            error.message ||
             'Live price unavailable for this token'
         });
       }

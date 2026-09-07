@@ -4,7 +4,7 @@
   "description": "Multi-chain paper trading simulator using real market prices. No real funds, no wallets, no transactions.",
   "main": "server.js",
   "engines": {
-    "node": "22.22.0"
+    "node": ">=18"
   },
   "scripts": {
     "start": "node server.js",
