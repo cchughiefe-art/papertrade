@@ -1,18 +1,54 @@
-const crypto = require('crypto');
-
 const {
   db,
   getOrCreateWallet,
+  updateCash,
+  addBalance,
+  getBalanceTransactions,
   STARTING_BALANCE
 } = require('../database/db');
 
-function cents(value) {
-  return Math.round(Number(value) * 100) / 100;
+function cents(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+function walletSummary(sessionId, solPriceUsd = null) {
+  const wallet = getOrCreateWallet(sessionId);
+
+  const positions = getPositions(sessionId);
+
+  let positionValueUsd = 0;
+
+  for (const p of positions) {
+    positionValueUsd += Number(p.investedUsd || 0);
+  }
+
+  const cashUsd = Number(wallet.cash_usd || 0);
+  const equityUsd = cashUsd + positionValueUsd;
+
+  const sol =
+    Number.isFinite(Number(solPriceUsd)) && Number(solPriceUsd) > 0
+      ? {
+          priceUsd: Number(solPriceUsd),
+          cashSol: cashUsd / Number(solPriceUsd),
+          equitySol: equityUsd / Number(solPriceUsd)
+        }
+      : {
+          priceUsd: null,
+          cashSol: null,
+          equitySol: null
+        };
+
+  return {
+    cashUsd,
+    positionValueUsd,
+    equityUsd,
+    totalPnlUsd: 0,
+    startingBalanceUsd: STARTING_BALANCE,
+    ...sol
+  };
 }
 
 function mapPosition(row) {
-  if (!row) return null;
-
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -20,16 +56,14 @@ function mapPosition(row) {
     tokenAddress: row.token_address,
     tokenName: row.token_name,
     symbol: row.symbol,
-    entryPriceUsd: row.entry_price_usd,
-    quantity: row.quantity,
-    investedUsd: row.invested_usd,
+    entryPriceUsd: Number(row.entry_price_usd),
+    quantity: Number(row.quantity),
+    investedUsd: Number(row.invested_usd),
     openedAt: row.opened_at
   };
 }
 
 function mapTrade(row) {
-  if (!row) return null;
-
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -37,446 +71,247 @@ function mapTrade(row) {
     tokenAddress: row.token_address,
     tokenName: row.token_name,
     symbol: row.symbol,
-    entryPriceUsd: row.entry_price_usd,
-    exitPriceUsd: row.exit_price_usd,
-    quantity: row.quantity,
-    investedUsd: row.invested_usd,
-    exitValueUsd: row.exit_value_usd,
-    pnlUsd: row.pnl_usd,
-    pnlPct: row.pnl_pct,
-    openedAt: row.opened_at,
-    closedAt: row.closed_at
-  };
-}
-
-function getWalletSimple(sessionId) {
-  const wallet =
-    getOrCreateWallet(sessionId);
-
-  return {
-    cash: cents(wallet.cash),
-    startingBalance:
-      wallet.starting_balance,
-
-    realizedPnl:
-      cents(wallet.realized_pnl),
-
-    totalPnl:
-      cents(
-        wallet.cash -
-        wallet.starting_balance +
-        wallet.realized_pnl
-      )
+    side: row.side,
+    priceUsd: Number(row.price_usd),
+    quantity: Number(row.quantity),
+    amountUsd: Number(row.amount_usd),
+    pnlUsd: Number(row.pnl_usd || 0),
+    createdAt: row.created_at
   };
 }
 
 function getPositions(sessionId) {
-  const rows = db
-    .prepare(`
-      SELECT *
-      FROM positions
-      WHERE session_id = ?
-      ORDER BY opened_at DESC
-    `)
-    .all(sessionId);
+  const rows = db.prepare(`
+    SELECT *
+    FROM positions
+    WHERE session_id = ?
+    ORDER BY id DESC
+  `).all(sessionId);
 
   return rows.map(mapPosition);
 }
 
-function getPosition(sessionId, positionId) {
-  const row = db
-    .prepare(`
-      SELECT *
-      FROM positions
-      WHERE session_id = ?
+function getPosition(sessionId, id) {
+  const row = db.prepare(`
+    SELECT *
+    FROM positions
+    WHERE session_id = ?
       AND id = ?
-    `)
-    .get(sessionId, positionId);
+  `).get(sessionId, id);
 
-  return mapPosition(row);
+  return row ? mapPosition(row) : null;
 }
 
 function getTrades(sessionId) {
-  const rows = db
-    .prepare(`
-      SELECT *
-      FROM trades
-      WHERE session_id = ?
-      ORDER BY closed_at DESC
-    `)
-    .all(sessionId);
+  const rows = db.prepare(`
+    SELECT *
+    FROM trades
+    WHERE session_id = ?
+    ORDER BY id DESC
+  `).all(sessionId);
 
   return rows.map(mapTrade);
 }
 
-function walletSummary(sessionId, priceMap) {
-  const wallet =
-    getOrCreateWallet(sessionId);
+function buy(sessionId, data) {
+  const amountUsd = Number(data.amountUsd);
+  const priceUsd = Number(data.priceUsd);
 
-  const positions =
-    getPositions(sessionId).map(position => {
-      const key =
-        `${position.chain}:${position.tokenAddress.toLowerCase()}`;
-
-      const price =
-        priceMap
-          ? priceMap.get(key)
-          : undefined;
-
-      const currentValueUsd =
-        price &&
-        price.priceUsd != null
-          ? position.quantity *
-            price.priceUsd
-          : null;
-
-      const pnl =
-        currentValueUsd != null
-          ? currentValueUsd -
-            position.investedUsd
-          : null;
-
-      return {
-        ...position,
-
-        currentPriceUsd:
-          price
-            ? price.priceUsd
-            : null,
-
-        priceUpdatedAt:
-          price
-            ? price.updatedAt
-            : null,
-
-        currentValueUsd,
-
-        unrealizedPnlUsd:
-          pnl != null
-            ? cents(pnl)
-            : null,
-
-        unrealizedPnlPct:
-          pnl != null
-            ? (pnl /
-                position.investedUsd) *
-              100
-            : null
-      };
-    });
-
-  const openValue =
-    positions.reduce(
-      (sum, position) =>
-        sum +
-        (position.currentValueUsd || 0),
-      0
-    );
-
-  const knownPrices =
-    positions.filter(
-      position =>
-        position.currentValueUsd != null
-    ).length;
-
-  const equity =
-    wallet.cash + openValue;
-
-  const unrealizedPnl =
-    positions.reduce(
-      (sum, position) =>
-        sum +
-        (position.unrealizedPnlUsd || 0),
-      0
-    );
-
-  return {
-    cash: cents(wallet.cash),
-
-    startingBalance:
-      wallet.starting_balance,
-
-    positions,
-
-    openPositionsValue:
-      cents(openValue),
-
-    equity:
-      cents(equity),
-
-    realizedPnl:
-      cents(wallet.realized_pnl),
-
-    unrealizedPnl:
-      cents(unrealizedPnl),
-
-    totalPnl:
-      cents(
-        equity -
-        wallet.starting_balance
-      ),
-
-    allPricesKnown:
-      knownPrices === positions.length
-  };
-}
-
-function buy(
-  sessionId,
-  chain,
-  address,
-  amountUsd,
-  priceUsd
-) {
-  const wallet =
-    getOrCreateWallet(sessionId);
-
-  if (
-    amountUsd >
-    wallet.cash + 1e-9
-  ) {
-    throw new Error(
-      'Not enough paper cash'
-    );
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new Error('Invalid investment amount');
   }
 
-  if (
-    !Number.isFinite(priceUsd) ||
-    priceUsd <= 0
-  ) {
-    throw new Error(
-      'Invalid market price'
-    );
+  if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+    throw new Error('Invalid token price');
   }
 
-  const quantity =
-    amountUsd / priceUsd;
+  const wallet = getOrCreateWallet(sessionId);
 
-  const id =
-    crypto.randomUUID();
+  if (wallet.cash_usd < amountUsd) {
+    throw new Error('Insufficient paper cash');
+  }
 
-  const now =
-    Math.floor(Date.now() / 1000);
+  const quantity = amountUsd / priceUsd;
 
-  const transaction =
-    db.transaction(() => {
-      db.prepare(`
-        INSERT INTO positions
-        (
-          id,
-          session_id,
-          chain,
-          token_address,
-          token_name,
-          symbol,
-          entry_price_usd,
-          quantity,
-          invested_usd,
-          opened_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        sessionId,
+  const transaction = db.transaction(() => {
+    updateCash(
+      sessionId,
+      cents(wallet.cash_usd - amountUsd)
+    );
+
+    db.prepare(`
+      INSERT INTO positions(
+        session_id,
         chain,
-        address,
-        null,
-        null,
-        priceUsd,
+        token_address,
+        token_name,
+        symbol,
+        entry_price_usd,
         quantity,
-        cents(amountUsd),
-        now
-      );
+        invested_usd
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sessionId,
+      data.chain,
+      data.address,
+      data.tokenName || 'Unknown Token',
+      data.symbol || 'UNKNOWN',
+      priceUsd,
+      quantity,
+      amountUsd
+    );
 
-      db.prepare(`
-        UPDATE wallets
-        SET cash = cash - ?
-        WHERE session_id = ?
-      `).run(
-        cents(amountUsd),
-        sessionId
-      );
-    });
+    db.prepare(`
+      INSERT INTO trades(
+        session_id,
+        chain,
+        token_address,
+        token_name,
+        symbol,
+        side,
+        price_usd,
+        quantity,
+        amount_usd,
+        pnl_usd
+      )
+      VALUES (?, ?, ?, ?, ?, 'BUY', ?, ?, ?, 0)
+    `).run(
+      sessionId,
+      data.chain,
+      data.address,
+      data.tokenName || 'Unknown Token',
+      data.symbol || 'UNKNOWN',
+      priceUsd,
+      quantity,
+      amountUsd
+    );
+  });
 
   transaction();
 
-  return getPosition(
-    sessionId,
-    id
-  );
+  return getOrCreateWallet(sessionId);
 }
 
-function sell(
-  sessionId,
-  positionId,
-  exitPriceUsd
-) {
-  const position =
-    getPosition(
-      sessionId,
-      positionId
-    );
+function sell(sessionId, positionId, priceUsd) {
+  const position = getPosition(sessionId, positionId);
 
   if (!position) {
-    throw new Error(
-      'Position not found'
-    );
+    throw new Error('Position not found');
   }
 
-  if (
-    !Number.isFinite(exitPriceUsd) ||
-    exitPriceUsd <= 0
-  ) {
-    throw new Error(
-      'Invalid exit price'
-    );
+  const price = Number(priceUsd);
+
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error('Invalid sell price');
   }
 
-  const exitValueUsd =
-    position.quantity *
-    exitPriceUsd;
+  const proceeds = position.quantity * price;
 
   const pnl =
-    exitValueUsd -
-    position.investedUsd;
+    proceeds - position.investedUsd;
 
-  const pnlPct =
-    (pnl /
-      position.investedUsd) *
-    100;
+  const wallet = getOrCreateWallet(sessionId);
 
-  const now =
-    Math.floor(Date.now() / 1000);
+  const transaction = db.transaction(() => {
+    updateCash(
+      sessionId,
+      cents(wallet.cash_usd + proceeds)
+    );
 
-  const transaction =
-    db.transaction(() => {
-      db.prepare(`
-        DELETE FROM positions
-        WHERE id = ?
-      `).run(position.id);
+    db.prepare(`
+      INSERT INTO trades(
+        session_id,
+        chain,
+        token_address,
+        token_name,
+        symbol,
+        side,
+        price_usd,
+        quantity,
+        amount_usd,
+        pnl_usd
+      )
+      VALUES (?, ?, ?, ?, ?, 'SELL', ?, ?, ?, ?)
+    `).run(
+      sessionId,
+      position.chain,
+      position.tokenAddress,
+      position.tokenName,
+      position.symbol,
+      price,
+      position.quantity,
+      proceeds,
+      pnl
+    );
 
-      db.prepare(`
-        INSERT INTO trades
-        (
-          id,
-          session_id,
-          chain,
-          token_address,
-          token_name,
-          symbol,
-          entry_price_usd,
-          exit_price_usd,
-          quantity,
-          invested_usd,
-          exit_value_usd,
-          pnl_usd,
-          pnl_pct,
-          opened_at,
-          closed_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        crypto.randomUUID(),
-        sessionId,
-        position.chain,
-        position.tokenAddress,
-        position.tokenName,
-        position.symbol,
-        position.entryPriceUsd,
-        exitPriceUsd,
-        position.quantity,
-        position.investedUsd,
-        cents(exitValueUsd),
-        cents(pnl),
-        pnlPct,
-        position.openedAt,
-        now
-      );
-
-      db.prepare(`
-        UPDATE wallets
-        SET
-          cash = cash + ?,
-          realized_pnl =
-            realized_pnl + ?
-        WHERE session_id = ?
-      `).run(
-        cents(exitValueUsd),
-        cents(pnl),
-        sessionId
-      );
-    });
+    db.prepare(`
+      DELETE FROM positions
+      WHERE session_id = ?
+        AND id = ?
+    `).run(sessionId, positionId);
+  });
 
   transaction();
 
   return {
-    closedPosition: position,
-    exitPriceUsd,
-    exitValueUsd:
-      cents(exitValueUsd),
-    pnlUsd:
-      cents(pnl),
-    pnlPct
+    proceeds,
+    pnlUsd: pnl,
+    wallet: getOrCreateWallet(sessionId)
   };
 }
 
-function enrichPositionMetadata(
-  positionId,
-  token
-) {
-  db.prepare(`
-    UPDATE positions
-    SET
-      token_name = ?,
-      symbol = ?
-    WHERE id = ?
-  `).run(
-    token.name || null,
-    token.symbol || null,
-    positionId
-  );
+function deposit(sessionId, amountUsd) {
+  return addBalance(sessionId, 'deposit', amountUsd);
+}
+
+function withdraw(sessionId, amountUsd) {
+  return addBalance(sessionId, 'withdrawal', amountUsd);
+}
+
+function getBalanceHistory(sessionId) {
+  return getBalanceTransactions(sessionId);
 }
 
 function reset(sessionId) {
-  const transaction =
-    db.transaction(() => {
-      db.prepare(`
-        DELETE FROM positions
-        WHERE session_id = ?
-      `).run(sessionId);
+  const transaction = db.transaction(() => {
+    db.prepare(`
+      DELETE FROM positions
+      WHERE session_id = ?
+    `).run(sessionId);
 
-      db.prepare(`
-        DELETE FROM trades
-        WHERE session_id = ?
-      `).run(sessionId);
+    db.prepare(`
+      DELETE FROM trades
+      WHERE session_id = ?
+    `).run(sessionId);
 
-      db.prepare(`
-        UPDATE wallets
-        SET
-          cash = ?,
-          starting_balance = ?,
-          realized_pnl = 0
-        WHERE session_id = ?
-      `).run(
-        STARTING_BALANCE,
-        STARTING_BALANCE,
-        sessionId
-      );
-    });
+    db.prepare(`
+      DELETE FROM balance_transactions
+      WHERE session_id = ?
+    `).run(sessionId);
+
+    db.prepare(`
+      UPDATE wallets
+      SET cash_usd = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = ?
+    `).run(STARTING_BALANCE, sessionId);
+  });
 
   transaction();
 
-  getOrCreateWallet(sessionId);
+  return getOrCreateWallet(sessionId);
 }
 
 module.exports = {
-  getWalletSimple,
   walletSummary,
   getPositions,
   getPosition,
   getTrades,
   buy,
   sell,
-  reset,
-  enrichPositionMetadata
+  deposit,
+  withdraw,
+  getBalanceHistory,
+  reset
 };

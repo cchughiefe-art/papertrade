@@ -1,165 +1,136 @@
-const { CHAINS } = require('../chains');
+const BASE_URL = process.env.DEXSCREENER_BASE_URL || 'https://api.dexscreener.com/latest/dex';
 
-const BASE =
-  process.env.DEXSCREENER_BASE ||
-  'https://api.dexscreener.com/latest/dex';
-
-async function fetchJson(url, timeoutMs = 8000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        accept: 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+async function fetchJson(url) {
+  const res = await fetch(url, {
+    headers: {
+      'accept': 'application/json',
+      'user-agent': 'PaperTrade/1.0'
     }
+  });
 
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
+  if (!res.ok) {
+    throw new Error(`DexScreener HTTP ${res.status}`);
   }
+
+  return res.json();
 }
 
-function normalizePair(chainKey, pair) {
-  const chain = CHAINS[chainKey];
+function normalizePair(pair) {
+  if (!pair) return null;
 
-  if (!chain || !pair || !pair.baseToken) {
+  const base = pair.baseToken || {};
+  const price = Number(pair.priceUsd);
+
+  if (!base.address || !Number.isFinite(price) || price <= 0) {
     return null;
   }
 
   return {
-    chain: chainKey,
-    address: pair.baseToken.address,
-    name: pair.baseToken.name || null,
-    symbol: pair.baseToken.symbol || null,
-    priceUsd: pair.priceUsd ? Number(pair.priceUsd) : null,
-    marketCapUsd:
-      pair.marketCap != null
-        ? Number(pair.marketCap)
-        : pair.fdv != null
-          ? Number(pair.fdv)
-          : null,
-    liquidityUsd:
-      pair.liquidity && pair.liquidity.usd != null
-        ? Number(pair.liquidity.usd)
-        : null,
-    volume24hUsd:
-      pair.volume && pair.volume.h24 != null
-        ? Number(pair.volume.h24)
-        : null,
-    priceChange24h:
-      pair.priceChange && pair.priceChange.h24 != null
-        ? Number(pair.priceChange.h24)
-        : null,
+    chain: pair.chainId || null,
+    address: base.address,
+    name: base.name || 'Unknown Token',
+    symbol: base.symbol || 'UNKNOWN',
+    priceUsd: price,
+    marketCapUsd: Number(pair.marketCap || pair.fdv || 0) || 0,
+    liquidityUsd: Number(pair.liquidity?.usd || 0) || 0,
+    volume24hUsd: Number(pair.volume?.h24 || 0) || 0,
+    priceChange24h: Number(pair.priceChange?.h24 || 0) || 0,
     pairAddress: pair.pairAddress || null,
     dex: pair.dexId || null,
-    updatedAt: Math.floor(Date.now() / 1000)
+    url: pair.url || null,
+    updatedAt: Date.now()
   };
 }
 
-function bestPairPerChain(pairs, address) {
-  const result = new Map();
+function bestPair(pairs) {
+  if (!Array.isArray(pairs) || !pairs.length) return null;
 
-  for (const pair of pairs || []) {
-    if (!pair.baseToken) continue;
+  const valid = pairs
+    .map(normalizePair)
+    .filter(Boolean);
 
-    if (
-      String(pair.baseToken.address).toLowerCase() !==
-      String(address).toLowerCase()
-    ) {
-      continue;
+  valid.sort((a, b) => {
+    if (b.liquidityUsd !== a.liquidityUsd) {
+      return b.liquidityUsd - a.liquidityUsd;
     }
 
-    const chainKey = pair.chainId;
+    return b.volume24hUsd - a.volume24hUsd;
+  });
 
-    if (!CHAINS[chainKey]) continue;
-
-    const liquidity =
-      pair.liquidity && pair.liquidity.usd
-        ? Number(pair.liquidity.usd)
-        : 0;
-
-    const previous = result.get(chainKey);
-
-    const previousLiquidity =
-      previous &&
-      previous.liquidity &&
-      previous.liquidity.usd
-        ? Number(previous.liquidity.usd)
-        : 0;
-
-    if (!previous || liquidity > previousLiquidity) {
-      result.set(chainKey, pair);
-    }
-  }
-
-  return result;
+  return valid[0] || null;
 }
 
 async function resolveToken(address) {
-  const data = await fetchJson(`${BASE}/tokens/${address}`);
+  const clean = String(address || '').trim();
 
-  const pairs = bestPairPerChain(data.pairs, address);
+  if (!clean) return null;
 
-  const results = [];
+  // Exact token lookup.
+  try {
+    const data = await fetchJson(
+      `${BASE_URL}/tokens/${encodeURIComponent(clean)}`
+    );
 
-  for (const [chainKey, pair] of pairs) {
-    const token = normalizePair(chainKey, pair);
+    const result = bestPair(data.pairs);
 
-    if (token && token.priceUsd != null) {
-      results.push(token);
+    if (result) return result;
+  } catch (_) {}
+
+  // Search endpoint catches tokens that are not returned by /tokens/:address.
+  try {
+    const data = await fetchJson(
+      `${BASE_URL}/search/?q=${encodeURIComponent(clean)}`
+    );
+
+    const pairs = Array.isArray(data.pairs) ? data.pairs : [];
+
+    const exact = pairs.filter(pair => {
+      const base = pair.baseToken?.address || '';
+      const quote = pair.quoteToken?.address || '';
+
+      return (
+        base.toLowerCase() === clean.toLowerCase() ||
+        quote.toLowerCase() === clean.toLowerCase()
+      );
+    });
+
+    const result = bestPair(exact.length ? exact : pairs);
+
+    if (result) {
+      // If the searched address was the quote token, normalize to it.
+      const pair = pairs.find(p =>
+        (p.baseToken?.address || '').toLowerCase() === clean.toLowerCase() ||
+        (p.quoteToken?.address || '').toLowerCase() === clean.toLowerCase()
+      );
+
+      if (pair) {
+        const normalized = normalizePair(pair);
+
+        if (
+          pair.quoteToken?.address?.toLowerCase() === clean.toLowerCase() &&
+          pair.baseToken?.address?.toLowerCase() !== clean.toLowerCase()
+        ) {
+          return {
+            ...result,
+            address: clean
+          };
+        }
+
+        return normalized || result;
+      }
+
+      return result;
     }
-  }
+  } catch (_) {}
 
-  results.sort(
-    (a, b) =>
-      (b.liquidityUsd || 0) -
-      (a.liquidityUsd || 0)
-  );
-
-  return results;
+  return null;
 }
 
-async function getTokenData(chain, address) {
-  const config = CHAINS[chain];
-
-  if (!config) {
-    throw new Error('Unsupported chain');
-  }
-
-  const data = await fetchJson(`${BASE}/tokens/${address}`);
-
-  const pairs = bestPairPerChain(data.pairs, address);
-
-  const pair = pairs.get(config.providers.dexscreener);
-
-  if (!pair) return null;
-
-  return normalizePair(chain, pair);
-}
-
-async function getPrice(chain, address) {
-  const token = await getTokenData(chain, address);
-
-  if (!token || token.priceUsd == null) {
-    return null;
-  }
-
-  return {
-    priceUsd: token.priceUsd,
-    updatedAt: token.updatedAt,
-    source: 'dexscreener'
-  };
+async function getPrice(address) {
+  return resolveToken(address);
 }
 
 module.exports = {
   resolveToken,
-  getTokenData,
   getPrice
 };

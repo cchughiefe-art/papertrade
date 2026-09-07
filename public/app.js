@@ -1,448 +1,194 @@
-const sessionKey = "pt_session";
-
-function createSessionId() {
-  if (window.crypto && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return "pt-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-}
+const sessionKey = 'papertrade_session';
 
 let sessionId = localStorage.getItem(sessionKey);
 
 if (!sessionId) {
-  sessionId = createSessionId();
+  sessionId =
+    crypto.randomUUID?.() ||
+    `${Date.now()}-${Math.random()}`;
+
   localStorage.setItem(sessionKey, sessionId);
 }
 
 let currentToken = null;
-let refreshTimer = null;
 
-const $ = (id) => document.getElementById(id);
-
-function api(path, options = {}) {
-  const headers = {
-    ...(options.headers || {}),
-    "X-Session-Id": sessionId
-  };
-
-  return fetch(path, {
-    ...options,
-    headers
-  }).then(async (response) => {
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(data.error || "Request failed");
-    }
-
-    return data;
-  });
-}
+const $ = id => document.getElementById(id);
 
 function money(value) {
-  const n = Number(value);
+  const n = Number(value || 0);
 
-  if (!Number.isFinite(n)) {
-    return "$0.00";
-  }
-
-  return "$" + n.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
+  return n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
     maximumFractionDigits: 2
   });
 }
 
-function price(value) {
-  const n = Number(value);
-
-  if (!Number.isFinite(n)) {
-    return "$0";
-  }
-
-  if (n >= 1) {
-    return "$" + n.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 6
-    });
-  }
-
-  if (n >= 0.01) {
-    return "$" + n.toFixed(4);
-  }
-
-  return "$" + Number(n.toPrecision(5)).toString();
-}
-
-function number(value, digits = 4) {
-  const n = Number(value);
-
-  if (!Number.isFinite(n)) {
-    return "0";
-  }
-
-  return n.toLocaleString(undefined, {
-    maximumFractionDigits: digits
+function number(value) {
+  return Number(value || 0).toLocaleString('en-US', {
+    maximumFractionDigits: 8
   });
 }
 
-function percent(value) {
-  const n = Number(value);
-
-  if (!Number.isFinite(n)) {
-    return "0.00%";
-  }
-
-  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
-}
-
 function shortAddress(address) {
-  if (!address) {
-    return "-";
-  }
+  if (!address) return '';
 
-  if (address.length <= 18) {
-    return address;
-  }
+  if (address.length <= 18) return address;
 
-  return address.slice(0, 8) + "..." + address.slice(-8);
+  return `${address.slice(0, 9)}...${address.slice(-9)}`;
 }
 
-function showMessage(text, type = "") {
-  const el = $("message");
+async function api(url, options = {}) {
+  const headers = {
+    ...(options.headers || {}),
+    'X-Session-Id': sessionId,
+    'Content-Type': 'application/json'
+  };
 
-  el.textContent = text;
-  el.className = "message";
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
 
-  if (type === "error") {
-    el.classList.add("loss");
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || 'Request failed');
   }
 
-  if (type === "success") {
-    el.classList.add("profit");
-  }
+  return data;
 }
 
-function hideMessage() {
-  $("message").classList.add("hidden");
+function showError(message) {
+  $('tokenError').textContent = message || '';
+}
+
+async function refreshWallet() {
+  const data = await api('/api/wallet');
+  const wallet = data.wallet;
+
+  $('cash').textContent = money(wallet.cashUsd);
+  $('cashSol').textContent =
+    wallet.cashSol == null
+      ? 'SOL unavailable'
+      : `${number(wallet.cashSol)} SOL`;
+
+  $('positionValue').textContent =
+    money(wallet.positionValueUsd);
+
+  $('equity').textContent =
+    money(wallet.equityUsd);
+
+  $('equitySol').textContent =
+    wallet.equitySol == null
+      ? 'SOL unavailable'
+      : `${number(wallet.equitySol)} SOL`;
+
+  $('pnl').textContent =
+    money(wallet.totalPnlUsd);
+
+  $('solPrice').textContent =
+    wallet.priceUsd == null
+      ? 'Unavailable'
+      : money(wallet.priceUsd);
 }
 
 function showToken(token) {
   currentToken = token;
 
-  $("tokenCard").classList.remove("hidden");
+  $('tokenCard').classList.remove('hidden');
 
-  $("tokenName").textContent = token.name || "Unknown Token";
-  $("tokenSymbol").textContent = token.symbol
-    ? "$" + token.symbol
-    : "-";
+  $('tokenName').textContent =
+    token.name || 'Unknown Token';
 
-  $("tokenPrice").textContent = price(token.priceUsd);
-  $("tokenChange").textContent = percent(token.priceChange24h);
+  $('tokenSymbol').textContent =
+    token.symbol
+      ? `$${token.symbol}`
+      : 'UNKNOWN';
 
-  $("tokenChange").className =
-    Number(token.priceChange24h) >= 0 ? "profit" : "loss";
+  $('tokenSource').textContent =
+    token.source ||
+    token.dex ||
+    'Market';
 
-  $("tokenChain").textContent = token.chain || "-";
-  $("marketCap").textContent = money(token.marketCapUsd);
-  $("liquidity").textContent = money(token.liquidityUsd);
-  $("volume").textContent = money(token.volume24hUsd);
-  $("dex").textContent = token.dex || "-";
-  $("contractAddress").textContent = token.address || "-";
+  $('tokenPrice').textContent =
+    Number(token.priceUsd) > 0
+      ? money(token.priceUsd)
+      : 'Price unavailable';
 
-  if (token.updatedAt) {
-    $("updated").textContent = new Date(token.updatedAt).toLocaleTimeString();
-  } else {
-    $("updated").textContent = "-";
-  }
+  $('tokenChange').textContent =
+    `${Number(token.priceChange24h || 0).toFixed(2)}%`;
 
-  const stale = $("staleBadge");
+  $('tokenMarketCap').textContent =
+    money(token.marketCapUsd);
 
-  if (token.stale) {
-    stale.classList.remove("hidden");
-  } else {
-    stale.classList.add("hidden");
-  }
+  $('tokenLiquidity').textContent =
+    money(token.liquidityUsd);
 
-  $("buyBtn").disabled = !token.priceUsd || token.stale;
-}
+  $('tokenVolume').textContent =
+    money(token.volume24hUsd);
 
-function clearChainChooser() {
-  const chooser = $("chainChooser");
+  $('tokenChain').textContent =
+    token.chain || 'Unknown';
 
-  chooser.innerHTML = "";
-  chooser.classList.add("hidden");
-}
-
-function showChainChooser(tokens) {
-  const chooser = $("chainChooser");
-
-  chooser.innerHTML = "";
-
-  if (!Array.isArray(tokens) || tokens.length === 0) {
-    chooser.classList.add("hidden");
-    return;
-  }
-
-  chooser.classList.remove("hidden");
-
-  const title = document.createElement("div");
-  title.textContent = "Multiple chains found. Choose one:";
-  title.style.width = "100%";
-  title.style.color = "#8b949e";
-  title.style.fontSize = "13px";
-
-  chooser.appendChild(title);
-
-  tokens.forEach((token) => {
-    const button = document.createElement("button");
-
-    button.textContent =
-      (token.chain || "unknown") +
-      " — " +
-      (token.symbol || "token");
-
-    button.addEventListener("click", () => {
-      clearChainChooser();
-      showToken(token);
-      refreshCurrentToken();
-    });
-
-    chooser.appendChild(button);
-  });
-}
-
-async function refreshWallet() {
-  try {
-    const data = await api("/api/wallet");
-
-    const wallet = data.wallet || data;
-
-    $("cash").textContent = money(wallet.cashUsd);
-    $("positionCount").textContent =
-      wallet.positionCount ?? 0;
-    $("equity").textContent = money(wallet.equityUsd);
-    $("totalPnl").textContent = money(wallet.totalPnlUsd);
-
-    $("totalPnl").className =
-      Number(wallet.totalPnlUsd) >= 0 ? "profit" : "loss";
-  } catch (error) {
-    console.error("Wallet refresh failed:", error);
-  }
+  $('tokenAddress').textContent =
+    token.address || '';
 }
 
 async function loadToken() {
-  const address = $("tokenAddress").value.trim();
+  const address =
+    $('addressInput').value.trim();
+
+  showError('');
 
   if (!address) {
-    showMessage("Enter a token contract or mint address.", "error");
+    showError('Enter a token contract or Solana mint.');
     return;
   }
 
-  const button = $("loadBtn");
-
-  button.disabled = true;
-  button.textContent = "LOADING...";
-
-  hideMessage();
-  clearChainChooser();
-  $("tokenCard").classList.add("hidden");
+  $('loadBtn').disabled = true;
+  $('loadBtn').textContent = 'Searching...';
 
   try {
-    const data = await api(
-      "/api/token/resolve/" + encodeURIComponent(address)
-    );
+    const data =
+      await api(
+        `/api/token/resolve/${encodeURIComponent(address)}`
+      );
 
-    const tokens = data.tokens || [];
-
-    if (tokens.length === 0) {
-      throw new Error("Token not found on supported chains.");
-    }
-
-    if (tokens.length === 1) {
-      showToken(tokens[0]);
-    } else {
-      showChainChooser(tokens);
-    }
-
-    showMessage("Token loaded.", "success");
+    showToken(data.token);
   } catch (error) {
-    showMessage(error.message, "error");
+    $('tokenCard').classList.add('hidden');
+    showError(error.message);
   } finally {
-    button.disabled = false;
-    button.textContent = "LOAD TOKEN";
-  }
-}
-
-async function refreshCurrentToken() {
-  if (!currentToken) {
-    return;
-  }
-
-  try {
-    const data = await api(
-      "/api/price/" +
-      encodeURIComponent(currentToken.chain) +
-      "/" +
-      encodeURIComponent(currentToken.address)
-    );
-
-    const token = data.token || data;
-
-    showToken({
-      ...currentToken,
-      ...token
-    });
-  } catch (error) {
-    console.error("Price refresh failed:", error);
-  }
-}
-
-async function refreshPositions() {
-  const container = $("positions");
-
-  try {
-    const data = await api("/api/positions");
-
-    const positions = data.positions || [];
-
-    if (positions.length === 0) {
-      container.innerHTML =
-        '<div class="empty">No open positions.</div>';
-      return;
-    }
-
-    container.innerHTML = "";
-
-    positions.forEach((position) => {
-      const item = document.createElement("div");
-      item.className = "item";
-
-      const pnl = Number(position.pnlUsd || 0);
-      const pnlClass = pnl >= 0 ? "profit" : "loss";
-
-      item.innerHTML = `
-        <div class="item-top">
-          <div>
-            <div class="item-title">
-              ${escapeHtml(position.tokenName || position.symbol || "Unknown")}
-            </div>
-
-            <div class="item-sub">
-              ${escapeHtml(position.chain || "-")}
-              · ${escapeHtml(position.symbol || "-")}
-              · ${escapeHtml(shortAddress(position.tokenAddress))}
-            </div>
-          </div>
-
-          <button class="sell" data-id="${position.id}">
-            PAPER SELL
-          </button>
-        </div>
-
-        <div class="item-grid">
-          <div>
-            <span>Entry</span>
-            ${price(position.entryPriceUsd)}
-          </div>
-
-          <div>
-            <span>Current</span>
-            ${price(position.currentPriceUsd)}
-          </div>
-
-          <div>
-            <span>Invested</span>
-            ${money(position.investedUsd)}
-          </div>
-
-          <div>
-            <span>Value</span>
-            ${money(position.currentValueUsd)}
-          </div>
-
-          <div>
-            <span>Quantity</span>
-            ${number(position.quantity, 8)}
-          </div>
-
-          <div>
-            <span>P&amp;L</span>
-            <strong class="${pnlClass}">
-              ${money(pnl)}
-              (${percent(position.pnlPercent)})
-            </strong>
-          </div>
-        </div>
-      `;
-
-      const sellButton = item.querySelector(".sell");
-
-      sellButton.addEventListener("click", () => {
-        sellPosition(position.id);
-      });
-
-      container.appendChild(item);
-    });
-  } catch (error) {
-    container.innerHTML =
-      `<div class="empty">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-async function sellPosition(positionId) {
-  if (!confirm("Sell this paper position at the current market price?")) {
-    return;
-  }
-
-  try {
-    const data = await api("/api/sell", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        positionId
-      })
-    });
-
-    showMessage(
-      "Sold. P&L: " + money(data.trade?.pnlUsd || 0),
-      Number(data.trade?.pnlUsd || 0) >= 0
-        ? "success"
-        : "error"
-    );
-
-    await refreshAll();
-  } catch (error) {
-    showMessage(error.message, "error");
+    $('loadBtn').disabled = false;
+    $('loadBtn').textContent = 'Load Token';
   }
 }
 
 async function buyToken() {
   if (!currentToken) {
-    showMessage("Load a token first.", "error");
+    showError('Load a token first.');
     return;
   }
 
-  const amount = Number($("amountUsd").value);
+  const amount =
+    Number($('amountInput').value);
 
   if (!Number.isFinite(amount) || amount <= 0) {
-    showMessage("Enter a valid investment amount.", "error");
+    showError('Enter a valid investment amount.');
     return;
   }
 
-  const button = $("buyBtn");
+  if (!currentToken.priceUsd || currentToken.priceUsd <= 0) {
+    showError('This token does not currently have a live price.');
+    return;
+  }
 
-  button.disabled = true;
-  button.textContent = "BUYING...";
+  $('buyBtn').disabled = true;
 
   try {
-    const data = await api("/api/buy", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+    await api('/api/buy', {
+      method: 'POST',
       body: JSON.stringify({
         chain: currentToken.chain,
         address: currentToken.address,
@@ -450,183 +196,239 @@ async function buyToken() {
       })
     });
 
-    showMessage(
-      "Paper buy executed at " +
-      price(data.trade?.priceUsd || currentToken.priceUsd),
-      "success"
-    );
+    $('amountInput').value = '';
 
     await refreshAll();
   } catch (error) {
-    showMessage(error.message, "error");
+    showError(error.message);
   } finally {
-    button.disabled =
-      !currentToken ||
-      !currentToken.priceUsd ||
-      currentToken.stale;
+    $('buyBtn').disabled = false;
+  }
+}
 
-    button.textContent = "PAPER BUY";
+async function refreshPositions() {
+  const data = await api('/api/positions');
+
+  if (!data.positions.length) {
+    $('positions').innerHTML =
+      '<p class="muted">No open positions.</p>';
+    return;
+  }
+
+  const results = await Promise.all(
+    data.positions.map(async position => {
+      let price = position.entryPriceUsd;
+
+      try {
+        const result =
+          await api(
+            `/api/price/${encodeURIComponent(position.chain)}/${encodeURIComponent(position.tokenAddress)}`
+          );
+
+        if (result.price?.priceUsd) {
+          price = Number(result.price.priceUsd);
+        }
+      } catch (_) {}
+
+      const value =
+        position.quantity * price;
+
+      const pnl =
+        value - position.investedUsd;
+
+      return `
+        <div class="position">
+          <div class="position-top">
+            <strong>${escapeHtml(position.symbol || position.tokenName)}</strong>
+            <span>${money(value)}</span>
+          </div>
+
+          <div class="position-details">
+            <span>Entry: ${money(position.entryPriceUsd)}</span>
+            <span>Current: ${money(price)}</span>
+            <span>Qty: ${number(position.quantity)}</span>
+          </div>
+
+          <div class="${pnl >= 0 ? 'profit' : 'loss'}">
+            P&L: ${money(pnl)}
+          </div>
+
+          <button
+            onclick="sellPosition(${position.id})"
+            class="danger"
+          >
+            SELL
+          </button>
+        </div>
+      `;
+    })
+  );
+
+  $('positions').innerHTML =
+    results.join('');
+}
+
+async function sellPosition(id) {
+  if (!confirm('Sell this paper position at the current market price?')) {
+    return;
+  }
+
+  try {
+    await api('/api/sell', {
+      method: 'POST',
+      body: JSON.stringify({
+        positionId: id
+      })
+    });
+
+    await refreshAll();
+  } catch (error) {
+    alert(error.message);
   }
 }
 
 async function refreshTrades() {
-  const container = $("trades");
+  const data = await api('/api/trades');
+
+  if (!data.trades.length) {
+    $('trades').innerHTML =
+      '<p class="muted">No trades yet.</p>';
+    return;
+  }
+
+  $('trades').innerHTML =
+    data.trades.map(trade => `
+      <div class="history-row">
+        <strong>${escapeHtml(trade.side)}</strong>
+        <span>${escapeHtml(trade.symbol || 'TOKEN')}</span>
+        <span>${money(trade.amountUsd)}</span>
+        <span class="${trade.pnlUsd >= 0 ? 'profit' : 'loss'}">
+          ${money(trade.pnlUsd)}
+        </span>
+      </div>
+    `).join('');
+}
+
+async function refreshBalanceHistory() {
+  const data =
+    await api('/api/balance-history');
+
+  if (!data.history.length) {
+    $('balanceHistory').innerHTML =
+      '<p class="muted">No deposits or withdrawals.</p>';
+    return;
+  }
+
+  $('balanceHistory').innerHTML =
+    data.history.map(item => `
+      <div class="history-row">
+        <strong class="${item.type === 'deposit' ? 'profit' : 'loss'}">
+          ${item.type.toUpperCase()}
+        </strong>
+
+        <span>${money(item.amountUsd)}</span>
+
+        <span>
+          ${new Date(item.createdAt).toLocaleString()}
+        </span>
+      </div>
+    `).join('');
+}
+
+async function depositMoney() {
+  const amount =
+    Number(prompt('Enter deposit amount in USD:'));
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return;
+  }
 
   try {
-    const data = await api("/api/trades");
-
-    const trades = data.trades || [];
-
-    if (trades.length === 0) {
-      container.innerHTML =
-        '<div class="empty">No trades yet.</div>';
-      return;
-    }
-
-    container.innerHTML = "";
-
-    trades.forEach((trade) => {
-      const item = document.createElement("div");
-      item.className = "item";
-
-      const pnl = Number(trade.pnlUsd || 0);
-
-      item.innerHTML = `
-        <div class="item-top">
-          <div>
-            <div class="item-title">
-              ${escapeHtml(trade.side || "").toUpperCase()}
-              ${escapeHtml(trade.symbol || trade.tokenName || "TOKEN")}
-            </div>
-
-            <div class="item-sub">
-              ${escapeHtml(trade.chain || "-")}
-              · ${escapeHtml(shortAddress(trade.tokenAddress))}
-            </div>
-          </div>
-
-          <strong class="${pnl >= 0 ? "profit" : "loss"}">
-            ${trade.side === "sell" ? money(pnl) : "-"}
-          </strong>
-        </div>
-
-        <div class="item-grid">
-          <div>
-            <span>Price</span>
-            ${price(trade.priceUsd)}
-          </div>
-
-          <div>
-            <span>Amount</span>
-            ${money(trade.amountUsd)}
-          </div>
-
-          <div>
-            <span>Quantity</span>
-            ${number(trade.quantity, 8)}
-          </div>
-
-          <div>
-            <span>Time</span>
-            ${formatDate(trade.createdAt)}
-          </div>
-        </div>
-      `;
-
-      container.appendChild(item);
+    await api('/api/deposit', {
+      method: 'POST',
+      body: JSON.stringify({
+        amountUsd: amount
+      })
     });
+
+    await refreshAll();
   } catch (error) {
-    container.innerHTML =
-      `<div class="empty">${escapeHtml(error.message)}</div>`;
+    alert(error.message);
+  }
+}
+
+async function withdrawMoney() {
+  const amount =
+    Number(prompt('Enter withdrawal amount in USD:'));
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return;
+  }
+
+  try {
+    await api('/api/withdraw', {
+      method: 'POST',
+      body: JSON.stringify({
+        amountUsd: amount
+      })
+    });
+
+    await refreshAll();
+  } catch (error) {
+    alert(error.message);
   }
 }
 
 async function resetAccount() {
-  const first = confirm(
-    "Reset your paper trading account back to $10,000?"
-  );
-
-  if (!first) {
-    return;
-  }
-
-  const second = confirm(
-    "This will delete all open positions and trade history. Continue?"
-  );
-
-  if (!second) {
+  if (!confirm(
+    'Reset the paper account back to $10,000? This deletes positions and history.'
+  )) {
     return;
   }
 
   try {
-    await api("/api/reset", {
-      method: "POST"
+    await api('/api/reset', {
+      method: 'POST'
     });
-
-    currentToken = null;
-
-    $("tokenCard").classList.add("hidden");
-    clearChainChooser();
-
-    showMessage("Paper trading account reset.", "success");
 
     await refreshAll();
   } catch (error) {
-    showMessage(error.message, "error");
+    alert(error.message);
   }
-}
-
-async function refreshAll() {
-  await Promise.all([
-    refreshWallet(),
-    refreshPositions(),
-    refreshTrades()
-  ]);
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-
-  return date.toLocaleString();
 }
 
 function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
-$("loadBtn").addEventListener("click", loadToken);
+async function refreshAll() {
+  try {
+    await refreshWallet();
+    await refreshPositions();
+    await refreshTrades();
+    await refreshBalanceHistory();
+  } catch (error) {
+    console.error(error);
+  }
+}
 
-$("buyBtn").addEventListener("click", buyToken);
+$('loadBtn').addEventListener('click', loadToken);
+$('buyBtn').addEventListener('click', buyToken);
+$('depositBtn').addEventListener('click', depositMoney);
+$('withdrawBtn').addEventListener('click', withdrawMoney);
+$('resetBtn').addEventListener('click', resetAccount);
 
-$("resetBtn").addEventListener("click", resetAccount);
-
-$("refreshBtn").addEventListener("click", refreshAll);
-
-$("tokenAddress").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
+$('addressInput').addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
     loadToken();
   }
 });
 
 refreshAll();
 
-refreshTimer = setInterval(async () => {
-  await refreshAll();
-
-  if (currentToken) {
-    await refreshCurrentToken();
-  }
-}, 7000);
+setInterval(refreshAll, 7000);
