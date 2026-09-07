@@ -236,70 +236,66 @@ function updateCash(sessionId, cashUsd) {
   );
 }
 
-function addBalance(
-  sessionId,
-  type,
-  amountUsd
-) {
-  if (
-    !['deposit', 'withdrawal'].includes(type)
-  ) {
-    throw new Error(
-      'Invalid balance transaction'
-    );
+function addBalance(sessionId, type, amount) {
+  if (typeof sessionId !== 'string' || !sessionId.trim()) {
+    throw new Error('Session ID required');
   }
 
-  const amount = Number(amountUsd);
-
-  if (
-    !Number.isFinite(amount) ||
-    amount <= 0
-  ) {
-    throw new Error(
-      'Amount must be greater than zero'
-    );
+  if (type !== 'deposit' && type !== 'withdraw') {
+    throw new Error('Invalid balance transaction type');
   }
 
-  const wallet =
-    getOrCreateWallet(sessionId);
+  const numericAmount =
+    typeof amount === 'number'
+      ? amount
+      : Number(amount);
 
   if (
-    type === 'withdrawal' &&
-    wallet.cash_usd < amount
+    !Number.isFinite(numericAmount) ||
+    numericAmount <= 0 ||
+    numericAmount === Infinity ||
+    numericAmount === -Infinity
   ) {
-    throw new Error(
-      'Insufficient paper cash'
-    );
+    throw new Error('Amount must be a finite number greater than zero');
   }
 
-  const newBalance =
+  const wallet = getOrCreateWallet(sessionId);
+  const currentCash = Number(wallet.cash_usd);
+
+  if (!Number.isFinite(currentCash) || currentCash < 0) {
+    throw new Error('Invalid cash balance');
+  }
+
+  if (type === 'withdraw' && numericAmount > currentCash) {
+    throw new Error('Insufficient cash');
+  }
+
+  const nextCash =
     type === 'deposit'
-      ? wallet.cash_usd + amount
-      : wallet.cash_usd - amount;
+      ? currentCash + numericAmount
+      : currentCash - numericAmount;
 
-  db.transaction(() => {
-    updateCash(
-      sessionId,
-      newBalance
-    );
+  if (!Number.isFinite(nextCash) || nextCash < 0) {
+    throw new Error('Invalid resulting cash balance');
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE wallets
+      SET cash_usd = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = ?
+    `).run(nextCash, sessionId);
 
     db.prepare(`
-      INSERT INTO balance_transactions (
-        session_id,
-        type,
-        amount_usd
-      )
-      VALUES (?, ?, ?)
-    `).run(
-      sessionId,
-      type,
-      amount
-    );
-  })();
+      INSERT INTO balance_transactions
+        (session_id, type, amount_usd, created_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(sessionId, type, numericAmount);
+  });
 
-  return getOrCreateWallet(
-    sessionId
-  );
+  tx();
+
+  return getOrCreateWallet(sessionId);
 }
 
 function getBalanceTransactions(

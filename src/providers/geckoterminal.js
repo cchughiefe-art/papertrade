@@ -77,7 +77,7 @@ function normalize(pool, network, address) {
   };
 }
 
-async function resolveToken(address, chainHint = null) {
+async function resolveToken(chainHint = null, address) {
   const networks =
     chainHint && NETWORKS[chainHint]
       ? [chainHint]
@@ -115,7 +115,7 @@ async function resolveToken(address, chainHint = null) {
 }
 
 async function getPrice(address, chainHint = null) {
-  return resolveToken(address, chainHint);
+  return resolveToken(chainHint, address);
 }
 
 module.exports = {

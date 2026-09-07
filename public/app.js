@@ -23,6 +23,7 @@ if (!sessionId) {
 }
 
 let currentToken = null;
+let tradeProcessing = false;
 
 async function api(
   url,
@@ -317,71 +318,97 @@ async function refreshWallet() {
 /* TOKEN SEARCH */
 
 async function loadToken() {
-  const input =
-    $('tokenInput');
+  const input = $('tokenInput');
+  const query = input.value.trim();
 
-  const address =
-    input.value.trim();
-
-  hide('resolveError');
+  clearError('resolveError');
   hide('chainChooser');
   hide('tokenCard');
 
-  if (!address) {
-    $('resolveError')
-      .textContent =
-      'Paste a token contract or Solana mint address.';
-
-    show('resolveError');
-
+  if (!query) {
+    showError(
+      'resolveError',
+      'Enter a token name, symbol, contract, or Solana mint.'
+    );
     return;
   }
 
-  const button =
-    $('loadBtn');
-
-  button.disabled = true;
-  button.textContent =
-    'SEARCHING...';
-
+  setButton('loadBtn', true, 'SEARCHING...');
   show('searchStatus');
 
   try {
-    const data =
-      await api(
-        '/api/token/resolve/' +
-        encodeURIComponent(
-          address
-        )
+    let data;
+
+    const looksLikeAddress =
+      query.length >= 32 &&
+      query.length <= 60 &&
+      (
+        /^0x[a-fA-F0-9]{40}$/.test(query) ||
+        /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(query)
       );
 
-    if (
-      data.ambiguous &&
-      Array.isArray(data.tokens)
-    ) {
-      renderChainChooser(
-        data.tokens
-      );
-    } else {
-      showToken(
-        data.token
-      );
+    if (looksLikeAddress) {
+      try {
+        data = await api(
+          '/api/token/resolve/' +
+          encodeURIComponent(query)
+        );
+
+        if (
+          data.ambiguous &&
+          Array.isArray(data.tokens)
+        ) {
+          renderSearchResults(data.tokens);
+        } else if (data.token) {
+          showToken(data.token);
+        } else {
+          throw new Error('Token not found.');
+        }
+
+        return;
+      } catch (addressError) {
+        console.log(
+          'Address resolution failed, trying token search:',
+          addressError.message
+        );
+      }
     }
-  } catch (error) {
-    $('resolveError')
-      .textContent =
-      error.message;
 
-    show('resolveError');
+    data = await api(
+      '/api/token/search?q=' +
+      encodeURIComponent(query)
+    );
+
+    const results =
+      Array.isArray(data.results)
+        ? data.results
+        : [];
+
+    if (!results.length) {
+      throw new Error('No matching tokens found.');
+    }
+
+    if (results.length === 1) {
+      showToken(results[0]);
+    } else {
+      renderSearchResults(results);
+    }
+
+  } catch (error) {
+    showError(
+      'resolveError',
+      error.message || 'Token search failed.'
+    );
   } finally {
     hide('searchStatus');
 
-    button.disabled = false;
-    button.textContent =
-      'SEARCH';
+    setButton(
+      'loadBtn',
+      false,
+      'SEARCH'
+    );
   }
 }
-
 function renderChainChooser(
   tokens
 ) {
@@ -611,108 +638,7 @@ async function refreshCurrentToken() {
   }
 }
 
-/* BUY */
-
-async function buyToken() {
-  if (!currentToken) {
-    alert(
-      'Load a token first.'
-    );
-
-    return;
-  }
-
-  const amount =
-    Number(
-      $('amountInput').value
-    );
-
-  hide('buyError');
-
-  if (
-    !Number.isFinite(amount) ||
-    amount <= 0
-  ) {
-    $('buyError')
-      .textContent =
-      'Enter a valid investment amount.';
-
-    show('buyError');
-
-    return;
-  }
-
-  const button =
-    $('buyBtn');
-
-  button.disabled = true;
-  button.textContent =
-    'BUYING...';
-
-  try {
-    await api(
-      '/api/buy',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          chain:
-            currentToken.chain,
-          address:
-            currentToken.address,
-          amountUsd:
-            amount
-        })
-      }
-    );
-
-    $('amountInput').value =
-      '';
-
-    await refreshAll();
-  } catch (error) {
-    $('buyError')
-      .textContent =
-      error.message;
-
-    show('buyError');
-  } finally {
-    button.disabled = false;
-    button.textContent =
-      'BUY TOKEN';
-  }
-}
-
-/* SELL */
-
-async function sellPosition(
-  positionId
-) {
-  if (
-    !confirm(
-      'Sell this paper position at the current real market price?'
-    )
-  ) {
-    return;
-  }
-
-  try {
-    await api(
-      '/api/sell',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          positionId
-        })
-      }
-    );
-
-    await refreshAll();
-  } catch (error) {
-    alert(
-      error.message
-    );
-  }
-}
+/* BUY/SELL handlers are defined in the final trading section below. */
 
 /* POSITIONS */
 
@@ -1070,38 +996,6 @@ async function changeBalance(
   }
 }
 
-/* RESET */
-
-async function resetAccount() {
-  if (
-    !confirm(
-      'Reset the paper account to $10,000 and delete all positions and trade history?'
-    )
-  ) {
-    return;
-  }
-
-  try {
-    await api(
-      '/api/reset',
-      {
-        method: 'POST'
-      }
-    );
-
-    currentToken =
-      null;
-
-    hide('tokenCard');
-
-    await refreshAll();
-  } catch (error) {
-    alert(
-      error.message
-    );
-  }
-}
-
 /* COPY */
 
 async function copyAddress() {
@@ -1144,7 +1038,8 @@ async function refreshAll() {
   await Promise.all([
     refreshWallet(),
     refreshPositions(),
-    refreshTrades()
+    refreshTrades(),
+    loadPTConfig()
   ]);
 }
 
@@ -1199,8 +1094,32 @@ setInterval(
 );
 /* FINAL TRADING PATCH */
 
-const PT_FEE_PCT = 0.25;
-const PT_SLIPPAGE_PCT = 0.50;
+let PT_FEE_PCT = 0.25;
+let PT_SLIPPAGE_PCT = 0.50;
+let ptConfigLoaded = false;
+
+async function loadPTConfig() {
+  try {
+    const data = await api('/api/config');
+    const config = data.config || {};
+
+    const fee = Number(config.feePct);
+    const slippage = Number(config.slippagePct);
+
+    if (Number.isFinite(fee) && fee >= 0) {
+      PT_FEE_PCT = fee;
+    }
+
+    if (Number.isFinite(slippage) && slippage >= 0) {
+      PT_SLIPPAGE_PCT = slippage;
+    }
+
+    ptConfigLoaded = true;
+  } catch (_) {
+    // Safe defaults match the backend defaults.
+    ptConfigLoaded = false;
+  }
+}
 
 function ptModal(title, html, confirmFn) {
   let m = $('ptModal');
@@ -1210,8 +1129,14 @@ function ptModal(title, html, confirmFn) {
     m.style.cssText = 'position:fixed;inset:0;background:#000b;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
     m.innerHTML = '<div id="ptBox" style="width:min(460px,100%);max-height:90vh;overflow:auto;background:#171717;border-radius:16px;padding:20px"><div style="display:flex;justify-content:space-between;align-items:center"><b id="ptTitle"></b><button id="ptX" class="btn">X</button></div><div id="ptBody"></div><div id="ptErr" class="error hidden"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:15px"><button id="ptCancel" class="btn">CANCEL</button><button id="ptConfirm" class="btn primary">CONFIRM</button></div></div>';
     document.body.appendChild(m);
-    $('ptX').onclick = () => m.remove();
-    $('ptCancel').onclick = () => m.remove();
+    $('ptX').onclick = () => {
+      tradeProcessing = false;
+      m.remove();
+    };
+    $('ptCancel').onclick = () => {
+      tradeProcessing = false;
+      m.remove();
+    };
   }
   $('ptTitle').textContent = title;
   $('ptBody').innerHTML = html;
@@ -1226,6 +1151,7 @@ function ptModal(title, html, confirmFn) {
       m.remove();
       await refreshAll();
     } catch (e) {
+      tradeProcessing = false;
       $('ptErr').textContent = e.message || 'Trade failed';
       show('ptErr');
       $('ptConfirm').disabled = false;
@@ -1236,20 +1162,28 @@ function ptModal(title, html, confirmFn) {
 }
 
 buyToken = function () {
-  if (!currentToken) return showGlobalError('Load a token first.');
+  if (tradeProcessing) return;
+
+  if (!currentToken) {
+    return showGlobalError('Load a token first.');
+  }
 
   const amount = Number($('amountInput')?.value);
   const price = Number(currentToken.priceUsd);
 
-  if (!Number.isFinite(amount) || amount <= 0)
+  if (!Number.isFinite(amount) || amount <= 0) {
     return showGlobalError('Enter a valid investment amount.');
+  }
 
-  if (!Number.isFinite(price) || price <= 0)
+  if (!Number.isFinite(price) || price <= 0) {
     return showGlobalError('A live price is required before buying.');
+  }
 
   const fee = amount * PT_FEE_PCT / 100;
   const execution = price * (1 + PT_SLIPPAGE_PCT / 100);
   const qty = amount / execution;
+
+  tradeProcessing = true;
 
   ptModal(
     'Confirm BUY ' + (currentToken.symbol || 'TOKEN'),
@@ -1262,33 +1196,43 @@ buyToken = function () {
     '<div>QUANTITY<br><b>' + fmtQty(qty) + '</b></div>' +
     '</div>',
     async () => {
-      await api('/api/buy', {
-        method: 'POST',
-        body: JSON.stringify({
-          chain: currentToken.chain,
-          address: currentToken.address,
-          amountUsd: amount,
-          feePct: PT_FEE_PCT,
-          slippagePct: PT_SLIPPAGE_PCT
-        })
-      });
-      $('amountInput').value = '';
+      try {
+        await api('/api/buy', {
+          method: 'POST',
+          body: JSON.stringify({
+            chain: currentToken.chain,
+            address: currentToken.address,
+            amountUsd: amount
+          })
+        });
+
+        $('amountInput').value = '';
+        await refreshAll();
+      } finally {
+        tradeProcessing = false;
+      }
     }
   );
 };
 
 sellPosition = async function (positionId) {
+  if (tradeProcessing) return;
+
+  tradeProcessing = true;
+
   try {
     const d = await api('/api/position/' + encodeURIComponent(positionId));
     const p = d.position || d;
     const owned = Number(p.quantity);
     const price = Number(p.currentPriceUsd);
 
-    if (!Number.isFinite(owned) || owned <= 0)
+    if (!Number.isFinite(owned) || owned <= 0) {
       throw new Error('Invalid position quantity.');
+    }
 
-    if (!Number.isFinite(price) || price <= 0)
+    if (!Number.isFinite(price) || price <= 0) {
       throw new Error('Current price unavailable.');
+    }
 
     let qty = owned;
 
@@ -1305,28 +1249,35 @@ sellPosition = async function (positionId) {
       'Sell ' + (p.symbol || p.tokenName || 'TOKEN'),
       html,
       async () => {
-        qty = Number($('ptQty').value);
+        try {
+          qty = Number($('ptQty').value);
 
-        if (!Number.isFinite(qty) || qty <= 0)
-          throw new Error('Enter a valid quantity.');
+          if (!Number.isFinite(qty) || qty <= 0) {
+            throw new Error('Enter a valid quantity.');
+          }
 
-        if (qty > owned + 1e-12)
-          throw new Error('You cannot sell more than you own.');
+          if (qty > owned + 1e-12) {
+            throw new Error('You cannot sell more than you own.');
+          }
 
-        await api('/api/sell', {
-          method: 'POST',
-          body: JSON.stringify({
-            positionId: p.id,
-            quantity: qty,
-            feePct: PT_FEE_PCT,
-            slippagePct: PT_SLIPPAGE_PCT
-          })
-        });
+          await api('/api/sell', {
+            method: 'POST',
+            body: JSON.stringify({
+              positionId: p.id,
+              quantity: qty
+            })
+          });
+
+          await refreshAll();
+        } finally {
+          tradeProcessing = false;
+        }
       }
     );
 
     const update = () => {
       const q = Number($('ptQty').value);
+
       if (!Number.isFinite(q) || q <= 0) {
         $('ptPreview').textContent = '';
         return;
@@ -1336,7 +1287,9 @@ sellPosition = async function (positionId) {
       const gross = q * execution;
       const fee = gross * PT_FEE_PCT / 100;
       const net = gross - fee;
-      const basis = Number(p.investedUsd || p.costBasisUsd || 0) * q / owned;
+      const basis =
+        Number(p.investedUsd || p.costBasisUsd || 0) *
+        q / owned;
       const pnl = net - basis;
 
       $('ptPreview').innerHTML =
@@ -1346,7 +1299,8 @@ sellPosition = async function (positionId) {
         'Gross: <b>' + fmtUsd(gross) + '</b><br>' +
         'Fee: <b>' + fmtUsd(fee) + '</b><br>' +
         'Net: <b>' + fmtUsd(net) + '</b><br>' +
-        'Estimated P&L: <b class="' + pnlClass(pnl) + '">' + signedUsd(pnl) + '</b>';
+        'Estimated P&L: <b class="' + pnlClass(pnl) + '">' +
+        signedUsd(pnl) + '</b>';
     };
 
     setTimeout(() => {
@@ -1363,6 +1317,7 @@ sellPosition = async function (positionId) {
     }, 0);
 
   } catch (e) {
+    tradeProcessing = false;
     showGlobalError(e.message || 'Unable to load position.');
   }
 };

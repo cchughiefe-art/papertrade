@@ -767,33 +767,46 @@ function sell(
     );
   }
 
-  const requestedQuantity =
-    data.quantity ??
-    data.sellQuantity ??
-    data.amountQuantity;
+    const requestedQuantity =
+      data.quantity ??
+      data.sellQuantity ??
+      data.amountQuantity;
 
-  let quantity;
+    let quantity;
 
-  if (
-    requestedQuantity === undefined ||
-    requestedQuantity === null ||
-    requestedQuantity === ''
-  ) {
-    quantity =
-      position.quantity;
-  } else {
-    quantity =
-      Number(requestedQuantity);
-  }
+    if (
+      requestedQuantity === undefined ||
+      requestedQuantity === null ||
+      requestedQuantity === ''
+    ) {
+      quantity = position.quantity;
+    } else {
+      quantity = Number(requestedQuantity);
+    }
 
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    throw new Error(
-      'Sell quantity must be greater than zero'
-    );
-  }
+    if (
+      !Number.isFinite(quantity) ||
+      quantity <= 0
+    ) {
+      throw new Error(
+        'Sell quantity must be greater than zero'
+      );
+    }
+
+    if (
+      !Number.isFinite(position.quantity) ||
+      position.quantity <= 0
+    ) {
+      throw new Error(
+        'Position has no sellable quantity'
+      );
+    }
+
+    if (quantity > position.quantity) {
+      throw new Error(
+        'Cannot sell more than the position quantity'
+      );
+    }
 
   const epsilon = 1e-10;
 
@@ -1033,7 +1046,7 @@ function withdraw(
 ) {
   return addBalance(
     sessionId,
-    'withdrawal',
+    'withdraw',
     amountUsd
   );
 }

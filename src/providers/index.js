@@ -45,95 +45,53 @@ function isUsablePrice(value) {
   );
 }
 
-async function resolveToken(address, chainHint = null) {
-  const clean = String(address || '').trim();
+async function resolveToken(chain, address) {
+  const cleanChain = String(chain || '').trim().toLowerCase();
+  const cleanAddress = String(address || '').trim();
 
-  if (!clean) return null;
-
-  const k = key(chainHint, clean);
-  const cached = getCached(k);
-
-  if (cached) return cached;
-
-  let result = null;
-
-  try {
-    result = await dexscreener.resolveToken(
-      clean,
-      chainHint
-    );
-  } catch (_) {}
-
-  if (!result) {
-    try {
-      result = await gecko.resolveToken(
-        clean,
-        chainHint
-      );
-    } catch (_) {}
+  if (!cleanAddress) {
+    throw new Error('Token address required');
   }
 
-  /*
-   * Pump.fun is a Solana launchpad.
-   * Only use it as metadata fallback.
-   * A zero price is never accepted as a tradable price.
-   */
-  if (
-    !result &&
-    (!chainHint || chainHint === 'solana')
-  ) {
-    try {
-      const res = await fetch(
-        `https://frontend-api.pump.fun/coins/${encodeURIComponent(clean)}`,
-        {
-          headers: {
-            accept: 'application/json',
-            'user-agent': 'PaperTrade/1.0'
-          }
-        }
-      );
-
-      if (res.ok) {
-        const coin = await res.json();
-
-        if (coin && coin.mint === clean) {
-          result = {
-            chain: 'solana',
-            address: clean,
-            name: coin.name || 'Unknown Token',
-            symbol: coin.symbol || 'UNKNOWN',
-            priceUsd: 0,
-            marketCapUsd:
-              Number(coin.usd_market_cap || 0) || 0,
-            liquidityUsd: 0,
-            volume24hUsd: 0,
-            priceChange24h: 0,
-            pairAddress: null,
-            dex: 'Pump.fun',
-            source: 'pump.fun',
-            priceAvailable: false,
-            updatedAt: Date.now()
-          };
-        }
+  const providers = [
+    async () => {
+      try {
+        return await dexscreener.resolveToken(cleanChain, cleanAddress);
+      } catch (_) {
+        return null;
       }
-    } catch (_) {}
+    },
+    async () => {
+      try {
+        return await geckoterminal.resolveToken(cleanChain, cleanAddress);
+      } catch (_) {
+        return null;
+      }
+    },
+    async () => {
+      try {
+        return await pumpfun.resolveToken(cleanChain, cleanAddress);
+      } catch (_) {
+        return null;
+      }
+    }
+  ];
+
+  for (const provider of providers) {
+    const token = await provider();
+
+    if (token && typeof token === 'object') {
+      const price = Number(token.priceUsd);
+
+      return {
+        ...token,
+        priceUsd: Number.isFinite(price) && price > 0 ? price : 0,
+        priceAvailable: Number.isFinite(price) && price > 0
+      };
+    }
   }
 
-  if (result) {
-    setCached(
-      k,
-      result,
-      result.priceAvailable === false
-        ? TOKEN_TTL
-        : PRICE_TTL
-    );
-
-    return result;
-  }
-
-  setCached(k, null, MISS_TTL);
-
-  return null;
+  throw new Error('Token not found');
 }
 
 async function getPrice(chain, address) {
@@ -170,6 +128,55 @@ async function getPrice(chain, address) {
   return null;
 }
 
+async function searchTokens(query) {
+  const clean = String(query || '').trim();
+
+  if (!clean) return [];
+
+  const cacheKey =
+    `search:${clean.toLowerCase()}`;
+
+  const cached = getCached(cacheKey);
+
+  if (Array.isArray(cached)) {
+    return cached;
+  }
+
+  let results = null;
+  let providerError = null;
+
+  try {
+    results = await dexscreener.searchTokens(clean);
+  } catch (error) {
+    providerError = error;
+  }
+
+  if (providerError) {
+    throw new Error(
+      'Token search provider is temporarily unavailable'
+    );
+  }
+
+  const usable =
+    Array.isArray(results)
+      ? results.filter(item =>
+          item &&
+          item.chain &&
+          item.address &&
+          item.name &&
+          item.symbol
+        )
+      : [];
+
+  setCached(
+    cacheKey,
+    usable,
+    5000
+  );
+
+  return usable;
+}
+
 async function getSolPrice() {
   const solMint =
     'So11111111111111111111111111111111111111112';
@@ -189,5 +196,6 @@ async function getSolPrice() {
 module.exports = {
   resolveToken,
   getPrice,
-  getSolPrice
+  getSolPrice,
+  searchTokens
 };

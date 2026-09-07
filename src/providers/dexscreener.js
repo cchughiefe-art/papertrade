@@ -59,6 +59,10 @@ function normalizePair(pair, address) {
     address: token.address,
     name: token.name || 'Unknown Token',
     symbol: token.symbol || 'UNKNOWN',
+    logoUrl:
+      pair.info?.imageUrl ||
+      pair.info?.header ||
+      null,
     priceUsd: price,
     marketCapUsd:
       Number(pair.marketCap || pair.fdv || 0) || 0,
@@ -94,7 +98,7 @@ function choose(pairs, address, chainHint) {
     )[0] || null;
 }
 
-async function resolveToken(address, chainHint = null) {
+async function resolveToken(chainHint = null, address) {
   const clean = String(address || '').trim();
 
   if (!clean) return null;
@@ -146,11 +150,113 @@ async function resolveToken(address, chainHint = null) {
   return null;
 }
 
+async function searchTokens(query) {
+  const clean = String(query || '').trim();
+
+  if (!clean) return [];
+
+  const data = await fetchJson(
+    `${BASE_URL}/latest/dex/search?q=${encodeURIComponent(clean)}`
+  );
+
+  const pairs = Array.isArray(data?.pairs)
+    ? data.pairs
+    : [];
+
+  const seen = new Set();
+
+  return pairs
+    .map(pair => {
+      const base = pair.baseToken || {};
+      const quote = pair.quoteToken || {};
+
+      const baseAddress = String(base.address || '');
+      const quoteAddress = String(quote.address || '');
+
+      const baseSymbol = String(base.symbol || '');
+      const quoteSymbol = String(quote.symbol || '');
+
+      const q = clean.toLowerCase();
+
+      const baseMatch =
+        baseAddress.toLowerCase() === q ||
+        baseSymbol.toLowerCase() === q ||
+        String(base.name || '').toLowerCase().includes(q);
+
+      const quoteMatch =
+        quoteAddress.toLowerCase() === q ||
+        quoteSymbol.toLowerCase() === q ||
+        String(quote.name || '').toLowerCase().includes(q);
+
+      const address =
+        baseMatch ? baseAddress :
+        quoteMatch ? quoteAddress :
+        baseAddress;
+
+      const token =
+        baseMatch ? base :
+        quoteMatch ? quote :
+        base;
+
+      const price = Number(pair.priceUsd);
+
+      if (!address || !Number.isFinite(price) || price <= 0) {
+        return null;
+      }
+
+      const key =
+        `${pair.chainId || ''}:${address}`.toLowerCase();
+
+      if (seen.has(key)) {
+        return null;
+      }
+
+      seen.add(key);
+
+      return {
+        chain: pair.chainId || null,
+        address,
+        name: token.name || 'Unknown Token',
+        symbol: token.symbol || 'UNKNOWN',
+        priceUsd: price,
+        marketCapUsd:
+          Number(pair.marketCap || pair.fdv || 0) || 0,
+        liquidityUsd:
+          Number(pair.liquidity?.usd || 0) || 0,
+        volume24hUsd:
+          Number(pair.volume?.h24 || 0) || 0,
+        priceChange24h:
+          Number(pair.priceChange?.h24 || 0) || 0,
+        pairAddress:
+          pair.pairAddress || null,
+        dex:
+          pair.dexId || null,
+        url:
+          pair.url || null,
+        logoUrl:
+          pair.info?.imageUrl ||
+          pair.info?.header ||
+          null,
+        source: 'dexscreener',
+        priceAvailable: true,
+        updatedAt: Date.now()
+      };
+    })
+    .filter(Boolean)
+    .sort(
+      (a, b) =>
+        b.liquidityUsd - a.liquidityUsd ||
+        b.volume24hUsd - a.volume24hUsd
+    )
+    .slice(0, 20);
+}
+
 async function getPrice(address, chainHint = null) {
-  return resolveToken(address, chainHint);
+  return resolveToken(chainHint, address);
 }
 
 module.exports = {
   resolveToken,
-  getPrice
+  getPrice,
+  searchTokens
 };

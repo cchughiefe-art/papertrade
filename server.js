@@ -4,7 +4,8 @@ const path = require('path');
 const {
   resolveToken,
   getPrice,
-  getSolPrice
+  getSolPrice,
+  searchTokens
 } = require('./src/providers');
 
 const {
@@ -52,7 +53,7 @@ function sessionId(req) {
     return supplied.trim().slice(0, 200);
   }
 
-  return 'demo';
+  throw new Error('Session ID required');
 }
 
 function errorResponse(res, error) {
@@ -64,7 +65,7 @@ function errorResponse(res, error) {
   if (/not found/i.test(message)) {
     status = 404;
   } else if (
-    /invalid|insufficient|amount|quantity|price|cash|slippage|fee|sell more/i.test(
+    /invalid|insufficient|amount|quantity|price|cash|slippage|fee|sell more|session|required/i.test(
       message
     )
   ) {
@@ -75,6 +76,105 @@ function errorResponse(res, error) {
     ok: false,
     error: message
   });
+}
+
+
+const CONFIG = {
+  feePct: Number.isFinite(
+    Number(process.env.PAPERTRADE_FEE_PCT)
+  )
+    ? Number(process.env.PAPERTRADE_FEE_PCT)
+    : 0.25,
+
+  slippagePct: Number.isFinite(
+    Number(process.env.PAPERTRADE_SLIPPAGE_PCT)
+  )
+    ? Number(process.env.PAPERTRADE_SLIPPAGE_PCT)
+    : 0.50,
+
+  staleAfterSeconds: Number.isFinite(
+    Number(process.env.PAPERTRADE_STALE_AFTER_SECONDS)
+  )
+    ? Number(process.env.PAPERTRADE_STALE_AFTER_SECONDS)
+    : 30,
+
+  lowLiquidityUsd: Number.isFinite(
+    Number(process.env.PAPERTRADE_LOW_LIQUIDITY_USD)
+  )
+    ? Number(process.env.PAPERTRADE_LOW_LIQUIDITY_USD)
+    : 10000
+};
+
+function freshness(price) {
+  if (!price) {
+    return {
+      stale: true,
+      ageSeconds: null
+    };
+  }
+
+  const raw = price.updatedAt;
+
+  const ms =
+    typeof raw === 'number'
+      ? raw
+      : Date.parse(raw);
+
+  if (!Number.isFinite(ms)) {
+    return {
+      stale: true,
+      ageSeconds: null
+    };
+  }
+
+  const ageSeconds =
+    Math.max(
+      0,
+      Math.floor(
+        (Date.now() - ms) / 1000
+      )
+    );
+
+  return {
+    stale:
+      ageSeconds >
+      CONFIG.staleAfterSeconds,
+
+    ageSeconds
+  };
+}
+
+function decoratePrice(price) {
+  if (!price) return null;
+
+  return {
+    ...price,
+    ...freshness(price)
+  };
+}
+
+function requireFreshPrice(price) {
+  if (
+    !price ||
+    !validPositiveNumber(price.priceUsd)
+  ) {
+    throw new Error(
+      'Live price unavailable for this token'
+    );
+  }
+
+  const fresh = freshness(price);
+
+  if (fresh.stale) {
+    throw new Error(
+      `Token price is stale (${fresh.ageSeconds ?? '?'}s old)`
+    );
+  }
+
+  return {
+    ...price,
+    ...fresh
+  };
 }
 
 function validPositiveNumber(value) {
@@ -97,11 +197,14 @@ async function liveValuation(id) {
     await Promise.all(
       positions.map(async position => {
         try {
-          const price =
+          const rawPrice =
             await getPrice(
               position.chain,
               position.tokenAddress
             );
+
+          const price =
+            decoratePrice(rawPrice);
 
           const currentPriceUsd =
             Number(
@@ -222,6 +325,27 @@ async function walletResponse(id) {
 }
 
 /*
+ * PUBLIC CONFIG
+ */
+
+app.get(
+  '/api/config',
+  (req, res) => {
+    res.json({
+      ok: true,
+      config: {
+        feePct: CONFIG.feePct,
+        slippagePct: CONFIG.slippagePct,
+        staleAfterSeconds:
+          CONFIG.staleAfterSeconds,
+        lowLiquidityUsd:
+          CONFIG.lowLiquidityUsd
+      }
+    });
+  }
+);
+
+/*
  * TOKEN RESOLUTION
  */
 
@@ -256,8 +380,8 @@ app.get(
         try {
           const token =
             await resolveToken(
-              address,
-              chain
+              chain,
+              address
             );
 
           if (token) {
@@ -277,7 +401,10 @@ app.get(
 
       try {
         const token =
-          await resolveToken(address);
+          await resolveToken(
+          undefined,
+          address
+        );
 
         if (token) {
           return res.json({
@@ -290,6 +417,56 @@ app.get(
       return res.status(404).json({
         ok: false,
         error: 'Token not found'
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  }
+);
+
+/*
+ * TOKEN SEARCH
+ */
+
+app.get(
+  '/api/token/search',
+  async (req, res) => {
+    try {
+      const query =
+        String(
+          req.query?.q || ''
+        ).trim();
+
+      if (!query) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Search query is required'
+        });
+      }
+
+      if (query.length > 100) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Search query is too long'
+        });
+      }
+
+      const results =
+        await searchTokens(query);
+
+      if (!results.length) {
+        return res.status(404).json({
+          ok: false,
+          error:
+            'No matching tokens found'
+        });
+      }
+
+      res.json({
+        ok: true,
+        results
       });
     } catch (error) {
       errorResponse(res, error);
@@ -330,8 +507,8 @@ app.get(
 
       const token =
         await resolveToken(
-          address,
-          chain
+          chain,
+          address
         );
 
       if (!token) {
@@ -403,7 +580,8 @@ app.get(
 
       res.json({
         ok: true,
-        price
+        price:
+          decoratePrice(price)
       });
     } catch (error) {
       errorResponse(res, error);
@@ -805,18 +983,16 @@ app.post(
               ),
 
             tokenName:
-              body.tokenName ||
               token.name,
 
             symbol:
-              body.symbol ||
               token.symbol,
 
             feePct:
-              body.feePct,
+              CONFIG.feePct,
 
             slippagePct:
-              body.slippagePct,
+              CONFIG.slippagePct,
 
             source:
               token.source
@@ -995,10 +1171,10 @@ app.post(
               ),
 
             feePct:
-              body.feePct,
+              CONFIG.feePct,
 
             slippagePct:
-              body.slippagePct,
+              CONFIG.slippagePct,
 
             source:
               token.source
