@@ -722,6 +722,9 @@ async function refreshPositions() {
     const positions =
       data.positions || [];
 
+    // Keep a copy so sell can use the live price already shown in the list
+    window.__lastPositions = positions;
+
     $('positionCount')
       .textContent =
       positions.length
@@ -1299,21 +1302,40 @@ sellPosition = async function (positionId) {
       throw new Error('Invalid position quantity.');
     }
 
-    // Fetch a fresh live price for this position's token
+    // 1) Prefer any price already on the position object
     let price = Number(p.currentPriceUsd);
+
+    // 2) Otherwise fetch a live price for this token
     if (!Number.isFinite(price) || price <= 0) {
       try {
-        const priceData = await api(
+        const priceRes = await api(
           '/api/price/' +
           encodeURIComponent(p.chain) + '/' +
           encodeURIComponent(p.tokenAddress)
         );
-        price = Number(priceData?.price?.priceUsd || priceData?.priceUsd);
-      } catch (_) {}
+        price = Number(
+          priceRes?.price?.priceUsd ??
+          priceRes?.priceUsd
+        );
+      } catch (err) {
+        console.warn('Live price fetch failed:', err.message);
+      }
+    }
+
+    // 3) Last resort: try the price that was shown in the positions list
+    if ((!Number.isFinite(price) || price <= 0) && window.__lastPositions) {
+      const match = window.__lastPositions.find(
+        x => Number(x.id) === Number(positionId)
+      );
+      if (match) {
+        price = Number(match.currentPriceUsd);
+      }
     }
 
     if (!Number.isFinite(price) || price <= 0) {
-      throw new Error('Current price unavailable. Try again in a moment.');
+      throw new Error(
+        'Current price unavailable. Wait a few seconds and try again.'
+      );
     }
 
     let qty = owned;
@@ -1361,7 +1383,7 @@ sellPosition = async function (positionId) {
       const q = Number($('ptQty').value);
 
       if (!Number.isFinite(q) || q <= 0) {
-        $('ptPreview').textContent = '';
+        if ($('ptPreview')) $('ptPreview').textContent = '';
         return;
       }
 
@@ -1374,28 +1396,33 @@ sellPosition = async function (positionId) {
         q / owned;
       const pnl = net - basis;
 
-      $('ptPreview').innerHTML =
-        'Market: <b>' + fmtPrice(price) + '</b><br>' +
-        'Execution: <b>' + fmtPrice(execution) + '</b><br>' +
-        'Quantity: <b>' + fmtQty(q) + '</b><br>' +
-        'Gross: <b>' + fmtUsd(gross) + '</b><br>' +
-        'Fee: <b>' + fmtUsd(fee) + '</b><br>' +
-        'Net: <b>' + fmtUsd(net) + '</b><br>' +
-        'Estimated P&L: <b class="' + pnlClass(pnl) + '">' +
-        signedUsd(pnl) + '</b>';
+      if ($('ptPreview')) {
+        $('ptPreview').innerHTML =
+          'Market: <b>' + fmtPrice(price) + '</b><br>' +
+          'Execution: <b>' + fmtPrice(execution) + '</b><br>' +
+          'Quantity: <b>' + fmtQty(q) + '</b><br>' +
+          'Gross: <b>' + fmtUsd(gross) + '</b><br>' +
+          'Fee: <b>' + fmtUsd(fee) + '</b><br>' +
+          'Net: <b>' + fmtUsd(net) + '</b><br>' +
+          'Estimated P&L: <b class="' + pnlClass(pnl) + '">' +
+          signedUsd(pnl) + '</b>';
+      }
     };
 
     setTimeout(() => {
       document.querySelectorAll('.ptPct').forEach(b => {
         b.onclick = () => {
-          $('ptQty').value =
-            owned * Number(b.dataset.p) / 100;
-          update();
+          if ($('ptQty')) {
+            $('ptQty').value = owned * Number(b.dataset.p) / 100;
+            update();
+          }
         };
       });
 
-      $('ptQty').oninput = update;
-      update();
+      if ($('ptQty')) {
+        $('ptQty').oninput = update;
+        update();
+      }
     }, 0);
 
   } catch (e) {
@@ -1403,6 +1430,7 @@ sellPosition = async function (positionId) {
     showGlobalError(e.message || 'Unable to load position.');
   }
 };
+
 
 resetAccount = async function () {
   if (!confirm(
