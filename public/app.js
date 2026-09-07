@@ -250,6 +250,76 @@ function hide(id) {
   );
 }
 
+function showError(id, message) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = message || 'Something went wrong.';
+  el.classList.remove('hidden');
+}
+
+function clearError(id) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = '';
+  el.classList.add('hidden');
+}
+
+function setButton(id, disabled, label) {
+  const el = $(id);
+  if (!el) return;
+  el.disabled = !!disabled;
+  if (label !== undefined) el.textContent = label;
+}
+
+function renderSearchResults(tokens) {
+  if (!Array.isArray(tokens) || !tokens.length) {
+    showError('resolveError', 'No matching tokens found.');
+    return;
+  }
+
+  // Re-use the chain chooser UI for search results
+  const box = $('chainButtons');
+  if (!box) return;
+
+  box.innerHTML = '';
+
+  tokens.slice(0, 12).forEach(token => {
+    const button = document.createElement('button');
+    button.className = 'btn';
+    button.style.textAlign = 'left';
+    button.style.justifyContent = 'flex-start';
+    button.style.height = 'auto';
+    button.style.padding = '10px 12px';
+    button.style.lineHeight = '1.3';
+
+    const chain = chainName(token.chain) || token.chain || 'Unknown';
+    const symbol = token.symbol || 'TOKEN';
+    const name = token.name || '';
+    const liq = token.liquidityUsd
+      ? ' · Liq ' + (typeof fmtCompact === 'function' ? fmtCompact(token.liquidityUsd) : '$' + Math.round(token.liquidityUsd))
+      : '';
+
+    button.innerHTML =
+      '<div style="font-weight:700">' + esc(symbol) + ' <span style="opacity:.7;font-weight:500">(' + esc(chain) + ')</span></div>' +
+      '<div style="font-size:.75rem;opacity:.75;margin-top:2px">' + esc(name) + esc(liq) + '</div>';
+
+    button.onclick = () => {
+      hide('chainChooser');
+      showToken(token);
+    };
+
+    box.appendChild(button);
+  });
+
+  const title = document.querySelector('#chainChooser .chooser-title');
+  if (title) title.textContent = 'SELECT TOKEN';
+
+  show('chainChooser');
+  hide('tokenCard');
+  clearError('resolveError');
+}
+
+
 /* WALLET */
 
 async function refreshWallet() {
