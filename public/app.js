@@ -1261,11 +1261,17 @@ buyToken = function () {
     '</div>',
     async () => {
       try {
+        // Snapshot the token at confirm time so a later search can't change it
+        const tokenToBuy = currentToken;
+        if (!tokenToBuy || !tokenToBuy.chain || !tokenToBuy.address) {
+          throw new Error('Token selection was lost. Search and select the token again.');
+        }
+
         await api('/api/buy', {
           method: 'POST',
           body: JSON.stringify({
-            chain: currentToken.chain,
-            address: currentToken.address,
+            chain: tokenToBuy.chain,
+            address: tokenToBuy.address,
             amountUsd: amount
           })
         });
@@ -1288,14 +1294,26 @@ sellPosition = async function (positionId) {
     const d = await api('/api/position/' + encodeURIComponent(positionId));
     const p = d.position || d;
     const owned = Number(p.quantity);
-    const price = Number(p.currentPriceUsd);
 
     if (!Number.isFinite(owned) || owned <= 0) {
       throw new Error('Invalid position quantity.');
     }
 
+    // Fetch a fresh live price for this position's token
+    let price = Number(p.currentPriceUsd);
     if (!Number.isFinite(price) || price <= 0) {
-      throw new Error('Current price unavailable.');
+      try {
+        const priceData = await api(
+          '/api/price/' +
+          encodeURIComponent(p.chain) + '/' +
+          encodeURIComponent(p.tokenAddress)
+        );
+        price = Number(priceData?.price?.priceUsd || priceData?.priceUsd);
+      } catch (_) {}
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new Error('Current price unavailable. Try again in a moment.');
     }
 
     let qty = owned;
