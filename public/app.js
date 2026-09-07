@@ -1197,3 +1197,200 @@ setInterval(
   },
   POLL_MS
 );
+/* FINAL TRADING PATCH */
+
+const PT_FEE_PCT = 0.25;
+const PT_SLIPPAGE_PCT = 0.50;
+
+function ptModal(title, html, confirmFn) {
+  let m = $('ptModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'ptModal';
+    m.style.cssText = 'position:fixed;inset:0;background:#000b;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    m.innerHTML = '<div id="ptBox" style="width:min(460px,100%);max-height:90vh;overflow:auto;background:#171717;border-radius:16px;padding:20px"><div style="display:flex;justify-content:space-between;align-items:center"><b id="ptTitle"></b><button id="ptX" class="btn">X</button></div><div id="ptBody"></div><div id="ptErr" class="error hidden"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:15px"><button id="ptCancel" class="btn">CANCEL</button><button id="ptConfirm" class="btn primary">CONFIRM</button></div></div>';
+    document.body.appendChild(m);
+    $('ptX').onclick = () => m.remove();
+    $('ptCancel').onclick = () => m.remove();
+  }
+  $('ptTitle').textContent = title;
+  $('ptBody').innerHTML = html;
+  hide('ptErr');
+  $('ptConfirm').disabled = false;
+  $('ptConfirm').textContent = 'CONFIRM';
+  $('ptConfirm').onclick = async () => {
+    $('ptConfirm').disabled = true;
+    $('ptConfirm').textContent = 'PROCESSING...';
+    try {
+      await confirmFn();
+      m.remove();
+      await refreshAll();
+    } catch (e) {
+      $('ptErr').textContent = e.message || 'Trade failed';
+      show('ptErr');
+      $('ptConfirm').disabled = false;
+      $('ptConfirm').textContent = 'CONFIRM';
+    }
+  };
+  m.style.display = 'flex';
+}
+
+buyToken = function () {
+  if (!currentToken) return showGlobalError('Load a token first.');
+
+  const amount = Number($('amountInput')?.value);
+  const price = Number(currentToken.priceUsd);
+
+  if (!Number.isFinite(amount) || amount <= 0)
+    return showGlobalError('Enter a valid investment amount.');
+
+  if (!Number.isFinite(price) || price <= 0)
+    return showGlobalError('A live price is required before buying.');
+
+  const fee = amount * PT_FEE_PCT / 100;
+  const execution = price * (1 + PT_SLIPPAGE_PCT / 100);
+  const qty = amount / execution;
+
+  ptModal(
+    'Confirm BUY ' + (currentToken.symbol || 'TOKEN'),
+    '<div class="pos-grid">' +
+    '<div>MARKET<br><b>' + fmtPrice(price) + '</b></div>' +
+    '<div>EXECUTION<br><b>' + fmtPrice(execution) + '</b></div>' +
+    '<div>INVESTMENT<br><b>' + fmtUsd(amount) + '</b></div>' +
+    '<div>FEE<br><b>' + fmtUsd(fee) + '</b></div>' +
+    '<div>SLIPPAGE<br><b>' + PT_SLIPPAGE_PCT + '%</b></div>' +
+    '<div>QUANTITY<br><b>' + fmtQty(qty) + '</b></div>' +
+    '</div>',
+    async () => {
+      await api('/api/buy', {
+        method: 'POST',
+        body: JSON.stringify({
+          chain: currentToken.chain,
+          address: currentToken.address,
+          amountUsd: amount,
+          feePct: PT_FEE_PCT,
+          slippagePct: PT_SLIPPAGE_PCT
+        })
+      });
+      $('amountInput').value = '';
+    }
+  );
+};
+
+sellPosition = async function (positionId) {
+  try {
+    const d = await api('/api/positions/' + encodeURIComponent(positionId));
+    const p = d.position || d;
+    const owned = Number(p.quantity);
+    const price = Number(p.currentPriceUsd);
+
+    if (!Number.isFinite(owned) || owned <= 0)
+      throw new Error('Invalid position quantity.');
+
+    if (!Number.isFinite(price) || price <= 0)
+      throw new Error('Current price unavailable.');
+
+    let qty = owned;
+
+    const html =
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:12px 0">' +
+      ['25','50','75','100'].map(x =>
+        '<button class="btn ptPct" data-p="' + x + '">' + x + '%</button>'
+      ).join('') +
+      '</div>' +
+      '<input id="ptQty" type="number" min="0" step="any" value="' + owned + '" placeholder="Custom quantity" style="width:100%;box-sizing:border-box;padding:12px">' +
+      '<div id="ptPreview" style="margin-top:14px"></div>';
+
+    ptModal(
+      'Sell ' + (p.symbol || p.tokenName || 'TOKEN'),
+      html,
+      async () => {
+        qty = Number($('ptQty').value);
+
+        if (!Number.isFinite(qty) || qty <= 0)
+          throw new Error('Enter a valid quantity.');
+
+        if (qty > owned + 1e-12)
+          throw new Error('You cannot sell more than you own.');
+
+        await api('/api/sell', {
+          method: 'POST',
+          body: JSON.stringify({
+            positionId: p.id,
+            quantity: qty,
+            feePct: PT_FEE_PCT,
+            slippagePct: PT_SLIPPAGE_PCT
+          })
+        });
+      }
+    );
+
+    const update = () => {
+      const q = Number($('ptQty').value);
+      if (!Number.isFinite(q) || q <= 0) {
+        $('ptPreview').textContent = '';
+        return;
+      }
+
+      const execution = price * (1 - PT_SLIPPAGE_PCT / 100);
+      const gross = q * execution;
+      const fee = gross * PT_FEE_PCT / 100;
+      const net = gross - fee;
+      const basis = Number(p.investedUsd || p.costBasisUsd || 0) * q / owned;
+      const pnl = net - basis;
+
+      $('ptPreview').innerHTML =
+        'Market: <b>' + fmtPrice(price) + '</b><br>' +
+        'Execution: <b>' + fmtPrice(execution) + '</b><br>' +
+        'Quantity: <b>' + fmtQty(q) + '</b><br>' +
+        'Gross: <b>' + fmtUsd(gross) + '</b><br>' +
+        'Fee: <b>' + fmtUsd(fee) + '</b><br>' +
+        'Net: <b>' + fmtUsd(net) + '</b><br>' +
+        'Estimated P&L: <b class="' + pnlClass(pnl) + '">' + signedUsd(pnl) + '</b>';
+    };
+
+    setTimeout(() => {
+      document.querySelectorAll('.ptPct').forEach(b => {
+        b.onclick = () => {
+          $('ptQty').value =
+            owned * Number(b.dataset.p) / 100;
+          update();
+        };
+      });
+
+      $('ptQty').oninput = update;
+      update();
+    }, 0);
+
+  } catch (e) {
+    showGlobalError(e.message || 'Unable to load position.');
+  }
+};
+
+resetAccount = async function () {
+  if (!confirm(
+    'Reset account? Positions, trades and balance history will be deleted. Your anonymous account ID stays the same.'
+  )) return;
+
+  try {
+    await api('/api/reset', { method: 'POST' });
+    currentToken = null;
+    hide('tokenCard');
+    hide('chainChooser');
+    await refreshAll();
+  } catch (e) {
+    showGlobalError(e.message || 'Reset failed.');
+  }
+};
+
+console.log('PaperTrade final trading patch loaded');
+
+/* FINAL WIRING FIX */
+function showGlobalError(msg) {
+  alert(msg || 'Something went wrong.');
+}
+
+if ($('buyBtn')) $('buyBtn').onclick = buyToken;
+if ($('resetBtn')) $('resetBtn').onclick = resetAccount;
+
+console.log('PaperTrade handlers wired');
