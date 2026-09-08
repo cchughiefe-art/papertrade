@@ -837,11 +837,7 @@ app.post(
       const id =
         sessionId(req);
 
-      const wallet =
-        await deposit(
-          id,
-          amount
-        );
+      await deposit(id, amount);
 
       res.json({
         ok: true,

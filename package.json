@@ -8,10 +8,17 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --test"
   },
   "dependencies": {
     "express": "^4.19.2",
     "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }

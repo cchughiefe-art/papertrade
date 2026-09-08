@@ -125,7 +125,7 @@ async function calculateValuation(sessionId, prices = {}) {
   let unrealizedPnlUsd = 0;
 
   for (const position of positions) {
-    const key = `\( {position.chain}: \){position.tokenAddress}`.toLowerCase();
+    const key = `${position.chain}:${position.tokenAddress}`.toLowerCase();
     const suppliedPrice =
       prices[key] ?? prices[position.tokenAddress] ?? prices[position.tokenAddress?.toLowerCase()];
     const price = Number(suppliedPrice);

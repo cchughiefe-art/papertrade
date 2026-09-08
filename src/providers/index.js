@@ -8,7 +8,7 @@ const TOKEN_TTL = 30000;
 const MISS_TTL = 5000;
 
 function key(chain, address) {
-  return `\( {chain || 'auto'}: \){String(address).toLowerCase()}`;
+  return `${chain || 'auto'}:${String(address).toLowerCase()}`;
 }
 
 function getCached(k) {

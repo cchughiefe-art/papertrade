@@ -219,29 +219,27 @@ async function addBalance(sessionId, type, amount) {
     throw new Error('Amount must be a finite number greater than zero');
   }
 
-  const wallet = await getOrCreateWallet(sessionId);
-  const currentCash = Number(wallet.cash_usd);
-
-  if (!Number.isFinite(currentCash) || currentCash < 0) {
-    throw new Error('Invalid cash balance');
-  }
-
-  if (type === 'withdraw' && numericAmount > currentCash) {
-    throw new Error('Insufficient cash');
-  }
-
-  const nextCash =
-    type === 'deposit'
-      ? currentCash + numericAmount
-      : currentCash - numericAmount;
-
-  if (!Number.isFinite(nextCash) || nextCash < 0) {
-    throw new Error('Invalid resulting cash balance');
-  }
-
+  await getOrCreateWallet(sessionId);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT cash_usd FROM wallets WHERE session_id = $1 FOR UPDATE`,
+      [sessionId]
+    );
+    const currentCash = Number(result.rows[0]?.cash_usd);
+    if (!Number.isFinite(currentCash) || currentCash < 0) {
+      throw new Error('Invalid cash balance');
+    }
+    if (type === 'withdraw' && numericAmount > currentCash) {
+      throw new Error('Insufficient cash');
+    }
+    const nextCash = type === 'deposit'
+      ? currentCash + numericAmount
+      : currentCash - numericAmount;
+    if (!Number.isFinite(nextCash) || nextCash < 0) {
+      throw new Error('Invalid resulting cash balance');
+    }
     await client.query(
       `UPDATE wallets SET cash_usd = $1, updated_at = NOW() WHERE session_id = $2`,
       [nextCash, sessionId]

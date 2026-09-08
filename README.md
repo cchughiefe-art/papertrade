@@ -1,83 +1,55 @@
 # PaperTrade
 
-A multi-chain paper trading simulator that uses real market prices while keeping all trading completely simulated.
+PaperTrade is a responsive multi-chain crypto trading simulator. It uses live market data while every balance, position, buy, and sell remains completely simulated.
 
-## Important
+## Safety
 
-PaperTrade does not use real money.
-
-It does not:
-
-- Connect to wallets
-- Store private keys
-- Send blockchain transactions
-- Buy real tokens
-- Sell real tokens
-- Require a funded wallet
-
-All balances, positions and trades are simulated.
+PaperTrade never connects to a wallet, stores private keys, sends blockchain transactions, or moves real funds.
 
 ## Features
 
-- Multi-chain token support
-- Automatic chain detection
-- Real market prices
-- Paper buying and selling
-- Simulated portfolio
-- Real-time position repricing
-- Profit and loss tracking
-- Trade history
-- Account reset
-- Mobile-friendly interface
-- SQLite database
-- Provider fallback
-- Stale-price protection
+- Search by token name, symbol, EVM contract, or Solana mint
+- Ethereum, Base, BNB Chain, Arbitrum, Polygon, Avalanche, and Solana support
+- DexScreener market data with GeckoTerminal fallback
+- Live position valuation and USD-to-SOL portfolio conversion
+- Simulated fees and slippage
+- Full and partial position selling
+- Deposit, withdrawal, P&L, trade history, and account reset
+- Durable PostgreSQL storage through Supabase or another Postgres provider
+- Responsive, mobile-first interface with accessible review dialogs
+- Stale-price protection for trade execution
 
-## Supported Chains
+## Run locally
 
-- Ethereum
-- Base
-- BNB Smart Chain
-- Arbitrum
-- Polygon
-- Avalanche
-- Solana
+Requirements: Node.js 18 or newer and a PostgreSQL database.
 
-## Market Data
+```bash
+npm ci
+export DATABASE_URL='your-postgres-connection-string'
+npm start
+```
 
-PaperTrade uses public market-data providers.
+Open `http://localhost:10000` unless `PORT` is set.
 
-Primary provider:
+## Environment variables
 
-- DexScreener
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | Yes | None | PostgreSQL connection string |
+| `PORT` | No | `10000` | HTTP server port |
+| `STARTING_BALANCE_USD` | No | `10000` | New account paper balance |
+| `PAPERTRADE_FEE_PCT` | No | `0.25` | Simulated trade fee percentage |
+| `PAPERTRADE_SLIPPAGE_PCT` | No | `0.50` | Simulated slippage percentage |
+| `PAPERTRADE_STALE_AFTER_SECONDS` | No | `30` | Maximum price age for execution |
 
-Fallback provider:
+## Verification
 
-- GeckoTerminal
+```bash
+npm run check
+```
 
-Prices are fetched when tokens are loaded and positions are periodically repriced.
+This validates server and browser JavaScript syntax, verifies token cache isolation, and runs a browser-style smoke test for search, buy, sell, deposit, withdrawal, and reset.
 
-## How Trading Works
+## Deployment
 
-When you paper buy a token:
-
-1. PaperTrade fetches the current market price.
-2. The requested USD amount is deducted from the simulated cash balance.
-3. The simulator calculates the token quantity.
-4. The position is stored in SQLite.
-5. No blockchain transaction occurs.
-
-When you paper sell:
-
-1. PaperTrade fetches the current market price.
-2. The position is closed at that simulated market price.
-3. Profit or loss is calculated.
-4. The simulated cash balance is updated.
-5. The trade is recorded in the database.
-
-## Starting Balance
-
-Every new session starts with:
-
-```text
-$10,000
+The included `render.yaml` runs the Node service on Render. Add `DATABASE_URL` to the Render service environment before deployment.

@@ -1,203 +1,48 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>PaperTrade Terminal</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070a0f">
+  <meta name="description" content="Paper trade crypto tokens with live market prices and zero real funds.">
+  <title>PaperTrade | Live Market Simulator</title>
+  <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-<div class="app">
-
-<header class="topbar">
-  <div>
-    <div class="brand">PAPER<span>TRADE</span></div>
-    <div class="subtitle">REAL MARKET DATA · PAPER EXECUTION</div>
-  </div>
-  <div class="live">
-    <span class="dot"></span> LIVE
-  </div>
-</header>
-
-<section class="account card">
-  <div class="account-main">
-    <div>
-      <div class="label">TOTAL EQUITY</div>
-      <div class="equity" id="wEquity">—</div>
-    </div>
-
-    <div class="account-actions">
-      <button id="depositBtn" class="btn green-btn">DEPOSIT</button>
-      <button id="withdrawBtn" class="btn outline-btn">WITHDRAW</button>
-      <button id="resetBtn" class="btn danger-btn">RESET</button>
-    </div>
-  </div>
-
-  <div class="account-grid">
-    <div>
-      <span class="label">AVAILABLE CASH</span>
-      <strong id="wCash">—</strong>
-    </div>
-    <div>
-      <span class="label">POSITIONS</span>
-      <strong id="wPositions">—</strong>
-    </div>
-    <div>
-      <span class="label">REALIZED P&L</span>
-      <strong id="wRealized">—</strong>
-    </div>
-    <div>
-      <span class="label">UNREALIZED P&L</span>
-      <strong id="wUnrealized">—</strong>
-    </div>
-  </div>
-
-  <div class="sol-balance">
-    <span>Portfolio value in SOL</span>
-    <strong id="solValue">—</strong>
-  </div>
-</section>
-
-<section class="card search-card">
-  <div class="section-title">MARKET SEARCH</div>
-
-  <div class="search-row">
-    <input
-      id="tokenInput"
-      type="text"
-      inputmode="text"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder="Search token name, symbol, contract or Solana mint"
-    >
-    <button id="loadBtn" class="btn primary">SEARCH</button>
-  </div>
-
-  <div id="searchStatus" class="status hidden">
-    Searching market data...
-  </div>
-
-  <div id="chainChooser" class="hidden">
-    <div class="chooser-title">SELECT NETWORK</div>
-    <div id="chainButtons" class="chain-buttons"></div>
-  </div>
-
-  <div id="resolveError" class="error hidden"></div>
-</section>
-
-<section class="card token-card hidden" id="tokenCard">
-
-  <div class="token-header">
-
-    <div class="token-identity">
-      <div class="token-icon" id="tIcon">?</div>
-
-      <div>
-        <div class="token-symbol" id="tSymbol">—</div>
-        <div class="token-name" id="tName">—</div>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="PaperTrade home"><span class="brand-mark">P</span><span>Paper<span>Trade</span></span></a>
+      <div class="market-status" id="marketStatus"><span class="status-dot"></span><span>Market live</span></div>
+    </header>
+    <main>
+      <section class="hero card">
+        <div class="hero-copy"><span class="eyebrow">Portfolio balance</span><h1 id="wEquity">$0.00</h1><div class="hero-meta"><span id="solValue">— SOL</span><span class="separator">•</span><span id="lastSync">Updating…</span></div></div>
+        <div class="account-actions"><button id="depositBtn" class="button button-success" type="button">Add funds</button><button id="withdrawBtn" class="button button-secondary" type="button">Withdraw</button><button id="resetBtn" class="icon-button danger" type="button" title="Reset account" aria-label="Reset paper account">↻</button></div>
+        <div class="metrics">
+          <div class="metric"><span>Cash</span><strong id="wCash">$0.00</strong></div><div class="metric"><span>Invested</span><strong id="wPositions">$0.00</strong></div><div class="metric"><span>Realized P&amp;L</span><strong id="wRealized">$0.00</strong></div><div class="metric"><span>Unrealized P&amp;L</span><strong id="wUnrealized">$0.00</strong></div>
+        </div>
+      </section>
+      <section class="search-card card">
+        <div class="section-heading"><div><span class="eyebrow">Discover</span><h2>Find a token</h2></div><span class="hint">Name, symbol or contract</span></div>
+        <form id="searchForm" class="search-row"><label class="search-input"><span aria-hidden="true">⌕</span><input id="tokenInput" type="search" autocomplete="off" spellcheck="false" placeholder="Try SOL, PEPE, or paste an address" aria-label="Token search"></label><button id="loadBtn" class="button button-primary" type="submit">Search</button></form>
+        <div id="searchStatus" class="inline-status hidden" role="status"><span class="spinner"></span>Searching live markets…</div><div id="resolveError" class="message error hidden" role="alert"></div>
+        <div id="chainChooser" class="results hidden"><div class="results-title">Select the correct token</div><div id="chainButtons" class="result-list"></div></div>
+      </section>
+      <section class="token-card card hidden" id="tokenCard">
+        <div class="token-header"><div class="token-identity"><div class="token-icon" id="tIcon">?</div><div><div class="token-name-line"><h2 id="tSymbol">—</h2><span id="tChain" class="network-pill">—</span></div><p id="tName">—</p></div></div><div class="price-block"><strong id="tPrice">—</strong><span id="tChange">—</span><span id="tStale" class="stale hidden">Price stale</span></div></div>
+        <div class="market-grid"><div><span>Market cap</span><strong id="tMcap">—</strong></div><div><span>Liquidity</span><strong id="tLiq">—</strong></div><div><span>24h volume</span><strong id="tVol">—</strong></div><div><span>Last update</span><strong id="tUpdated">—</strong></div></div>
+        <div class="contract-row"><div><span class="eyebrow">Contract</span><code id="tAddr">—</code></div><button id="copyAddressBtn" class="text-button" type="button">Copy</button></div>
+        <div class="trade-box"><div class="trade-box-head"><div><span class="eyebrow">Paper order</span><h3>Buy <span id="buySymbol">token</span></h3></div><span id="tDex" class="hint">—</span></div><div class="quick-amounts" aria-label="Quick amounts"><button type="button" data-amount="25">$25</button><button type="button" data-amount="50">$50</button><button type="button" data-amount="100">$100</button><button type="button" data-amount="250">$250</button></div><div class="amount-row"><label><span>$</span><input id="amountInput" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Amount in USD" aria-label="Investment amount"></label><button id="buyBtn" class="button button-success" type="button">Review buy</button></div><div id="buyError" class="message error hidden" role="alert"></div><p class="trade-note" id="feeNote">Live price plus simulated fee and slippage.</p></div>
+      </section>
+      <div class="content-grid">
+        <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Portfolio</span><h2>Open positions</h2></div><span id="positionCount" class="count-pill">0</span></div><div id="positionsList"><div class="empty-state"><span>◎</span><strong>No open positions</strong><p>Search for a token and place your first paper trade.</p></div></div></section>
+        <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Activity</span><h2>Trade history</h2></div></div><div id="tradesList"><div class="empty-state"><span>↕</span><strong>No trades yet</strong><p>Your buys and sells will appear here.</p></div></div></section>
       </div>
-    </div>
-
-    <div class="token-price-box">
-      <div class="token-price" id="tPrice">—</div>
-      <div id="tChange">24h —</div>
-      <div id="tStale" class="stale-badge hidden">STALE</div>
-    </div>
-
+    </main>
+    <footer><span>Simulation only</span><span>Live prices, no real funds</span><span>No wallet connection</span></footer>
   </div>
-
-  <div class="chain-line">
-    <span class="chain-badge" id="tChain">—</span>
-    <span class="muted" id="tDex">—</span>
-  </div>
-
-  <div class="market-stats">
-
-    <div class="stat">
-      <span class="label">MARKET CAP</span>
-      <strong id="tMcap">—</strong>
-    </div>
-
-    <div class="stat">
-      <span class="label">LIQUIDITY</span>
-      <strong id="tLiq">—</strong>
-    </div>
-
-    <div class="stat">
-      <span class="label">24H VOLUME</span>
-      <strong id="tVol">—</strong>
-    </div>
-
-    <div class="stat">
-      <span class="label">PRICE UPDATE</span>
-      <strong id="tUpdated">—</strong>
-    </div>
-
-  </div>
-
-  <div class="contract-box">
-    <div>
-      <span class="label">CONTRACT / MINT</span>
-      <div class="contract mono" id="tAddr">—</div>
-    </div>
-
-    <button id="copyAddressBtn" class="copy-btn">COPY</button>
-  </div>
-
-  <div class="trade-panel">
-
-    <div class="trade-title">PAPER BUY</div>
-
-    <div class="amount-row">
-      <div class="amount-input">
-        <span>$</span>
-        <input
-          id="amountInput"
-          type="number"
-          inputmode="decimal"
-          min="0.01"
-          step="0.01"
-          placeholder="100"
-        >
-      </div>
-
-      <button id="buyBtn" class="btn buy-btn">
-        BUY TOKEN
-      </button>
-    </div>
-
-    <div id="buyError" class="error hidden"></div>
-
-  </div>
-
-</section>
-
-<section class="card">
-  <div class="section-heading">
-    <div class="section-title">OPEN POSITIONS</div>
-    <span class="muted" id="positionCount"></span>
-  </div>
-
-  <div id="positionsList">
-    <p class="empty">No open positions.</p>
-  </div>
-</section>
-
-<section class="card">
-  <div class="section-title">TRADE HISTORY</div>
-
-  <div id="tradesList">
-    <p class="empty">No closed trades yet.</p>
-  </div>
-</section>
-
-<footer>
-  PAPERTRADE · SIMULATION ONLY · NO REAL FUNDS · NO WALLET CONNECTION
-</footer>
-
-</div>
-
-<script src="app.js"></script>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-backdrop" data-close-modal aria-label="Close dialog"></button><div class="modal-panel"><div class="modal-head"><div><span class="eyebrow">PaperTrade</span><h2 id="modalTitle">Confirm action</h2></div><button class="icon-button" data-close-modal type="button" aria-label="Close">×</button></div><div id="modalBody"></div><div id="modalError" class="message error hidden" role="alert"></div><div class="modal-actions"><button id="modalCancel" class="button button-secondary" type="button">Cancel</button><button id="modalConfirm" class="button button-primary" type="button">Confirm</button></div></div></div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="app.js"></script>
 </body>
 </html>
