@@ -81,7 +81,8 @@ async function getPositions(sessionId) {
     `SELECT * FROM positions WHERE session_id = $1 AND quantity > 0 ORDER BY id DESC`,
     [sessionId]
   );
-  return rows.map(mapPosition);
+  const list = Array.isArray(rows) ? rows : [];
+  return list.map(mapPosition);
 }
 
 async function getPosition(sessionId, id) {

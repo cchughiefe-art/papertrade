@@ -745,7 +745,7 @@ app.get(
       }
 
       const position =
-        getPosition(
+        await getPosition(
           id,
           positionId
         );
@@ -838,7 +838,7 @@ app.post(
         sessionId(req);
 
       const wallet =
-        deposit(
+        await deposit(
           id,
           amount
         );
@@ -885,7 +885,7 @@ app.post(
       const id =
         sessionId(req);
 
-      withdraw(
+      await withdraw(
         id,
         amount
       );
@@ -976,7 +976,7 @@ app.post(
       }
 
       const result =
-        buy(
+        await buy(
           sessionId(req),
           {
             chain,
@@ -1066,7 +1066,7 @@ app.post(
       }
 
       const position =
-        getPosition(
+        await getPosition(
           id,
           positionId
         );
@@ -1164,7 +1164,7 @@ app.post(
       }
 
       const result =
-        sell(
+        await sell(
           id,
           positionId,
           {
@@ -1219,7 +1219,7 @@ app.post(
         sessionId(req);
 
       const wallet =
-        reset(id);
+        await reset(id);
 
       res.json({
         ok: true,
@@ -1298,6 +1298,14 @@ app.use(
     });
   }
 );
+
+
+process.on('unhandledRejection', (err) => {
+  console.error('unhandledRejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException:', err);
+});
 
 app.listen(
   PORT,
