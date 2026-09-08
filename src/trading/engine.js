@@ -3,6 +3,7 @@ const {
   updateCash,
   addBalance,
   getBalanceTransactions,
+  initDb,
   STARTING_BALANCE,
   query,
   one,
@@ -77,6 +78,7 @@ function mapPosition(row) {
 }
 
 async function getPositions(sessionId) {
+  await initDb();
   const rows = await many(
     `SELECT * FROM positions WHERE session_id = $1 AND quantity > 0 ORDER BY id DESC`,
     [sessionId]
@@ -86,6 +88,7 @@ async function getPositions(sessionId) {
 }
 
 async function getPosition(sessionId, id) {
+  await initDb();
   const row = await one(
     `SELECT * FROM positions WHERE session_id = $1 AND id = $2`,
     [sessionId, id]
@@ -94,6 +97,7 @@ async function getPosition(sessionId, id) {
 }
 
 async function getTrades(sessionId) {
+  await initDb();
   const rows = await many(
     `SELECT * FROM trades WHERE session_id = $1 ORDER BY id DESC`,
     [sessionId]
