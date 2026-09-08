@@ -24,7 +24,7 @@ test('primary UI actions call their matching APIs', async () => {
   window.fetch = async (url, options = {}) => {
     calls.push({ url, method: options.method || 'GET', body: options.body });
     if (url === '/api/config') return response({ config: { feePct: .25, slippagePct: .5 } });
-    if (url === '/api/wallet') return response({ wallet: { cashUsd: 10000, positionValueUsd: 0, equityUsd: 10000, realizedPnlUsd: 0, unrealizedPnlUsd: 0, equitySol: 66.6667 } });
+    if (url === '/api/wallet') return response({ wallet: { cashUsd: 10000, positionValueUsd: 0, equityUsd: 10000, realizedPnlUsd: 0, unrealizedPnlUsd: 0, equitySol: 66.6667, solPriceUsd: 150 } });
     if (url === '/api/positions') return response({ positions: hasPosition ? [{ id: 1, chain: 'solana', tokenAddress: token.address, tokenName: token.name, symbol: token.symbol, quantity: 2, investedUsd: 200, costBasisUsd: 200, entryPriceUsd: 100, currentPriceUsd: 150, currentValueUsd: 300, unrealizedPnlUsd: 100, unrealizedPnlPct: 50, priceUpdatedAt: new Date().toISOString() }] : [] });
     if (url === '/api/trades') return response({ trades: [] });
     if (String(url).startsWith('/api/token/search')) return response({ results: [token] });
@@ -36,6 +36,7 @@ test('primary UI actions call their matching APIs', async () => {
   window.eval(script);
   await tick();
   assert.equal(window.document.getElementById('wEquity').textContent, '$10,000.00');
+  assert.match(window.document.getElementById('solValue').textContent, /1 SOL = \$150\.00/);
 
   window.document.getElementById('tokenInput').value = 'SOL';
   window.document.getElementById('searchForm').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
@@ -47,6 +48,9 @@ test('primary UI actions call their matching APIs', async () => {
   window.document.getElementById('modalConfirm').click();
   await tick();
   assert.ok(calls.some((call) => call.url === '/api/buy' && call.method === 'POST'));
+  window.document.querySelector('[data-tab="portfolio"]').click();
+  assert.equal(window.document.querySelector('[data-view="portfolio"]').classList.contains('hidden'), false);
+  assert.match(window.document.getElementById('positionsList').textContent, /Market cap/);
 
   window.document.querySelector('.sell-button').click();
   window.document.getElementById('modalConfirm').click();

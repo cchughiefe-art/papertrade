@@ -160,6 +160,7 @@ async function walletSummary(sessionId, solPriceUsd = null, valuation = {}) {
   const equityUsd = cashUsd + positionValueUsd;
   const solPrice = Number(solPriceUsd);
   const validSolPrice = Number.isFinite(solPrice) && solPrice > 0;
+  const displayedSolPrice = validSolPrice ? Number(solPrice.toFixed(6)) : null;
 
   return {
     cashUsd: roundMoney(cashUsd),
@@ -169,9 +170,9 @@ async function walletSummary(sessionId, solPriceUsd = null, valuation = {}) {
     unrealizedPnlUsd: roundMoney(unrealizedPnlUsd),
     totalPnlUsd: roundMoney(realizedPnlUsd + unrealizedPnlUsd),
     startingBalanceUsd: STARTING_BALANCE,
-    solPriceUsd: validSolPrice ? roundMoney(solPrice) : null,
-    cashSol: validSolPrice ? cashUsd / solPrice : null,
-    equitySol: validSolPrice ? equityUsd / solPrice : null,
+    solPriceUsd: displayedSolPrice,
+    cashSol: validSolPrice ? cashUsd / displayedSolPrice : null,
+    equitySol: validSolPrice ? equityUsd / displayedSolPrice : null,
     updatedAt: Date.now()
   };
 }

@@ -22,3 +22,23 @@ test('price cache keeps different tokens isolated', async () => {
     assert.equal(seen.length, 2);
   } finally { global.fetch = originalFetch; }
 });
+
+test('batch prices use one request for tokens on the same chain', async () => {
+  const originalFetch = global.fetch;
+  const seen = [];
+  global.fetch = async (url) => {
+    seen.push(String(url));
+    const tail = decodeURIComponent(String(url).split('/').pop());
+    const addresses = tail.split(',');
+    return { ok: true, json: async () => addresses.map((address, index) => ({ chainId: 'base', pairAddress: `pair-${address}`, priceUsd: String(index + 2), priceNative: String(index + 2), baseToken: { address, name: address, symbol: `T${index}` }, quoteToken: { address: 'USDC', name: 'USD Coin', symbol: 'USDC' }, liquidity: { usd: 100000 - index }, volume: { h24: 50000 }, priceChange: { h24: 1 } })) };
+  };
+  delete require.cache[require.resolve('../src/providers')];
+  delete require.cache[require.resolve('../src/providers/dexscreener')];
+  const provider = require('../src/providers');
+  try {
+    const results = await provider.getPrices([{ chain: 'base', address: 'BatchOne' }, { chain: 'base', address: 'BatchTwo' }]);
+    assert.deepEqual(results.map(item => item.priceUsd), [2, 3]);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0], /BatchOne,BatchTwo$/);
+  } finally { global.fetch = originalFetch; }
+});

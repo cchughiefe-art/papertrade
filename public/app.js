@@ -1,8 +1,8 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const POLL_MS = 10000;
-const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '' };
+const POLL_MS = 30000;
+const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
 let toastTimer;
 let modalAction = null;
 let sessionId = localStorage.getItem('pt_session');
@@ -12,12 +12,40 @@ if (!sessionId) {
   localStorage.setItem('pt_session', sessionId);
 }
 
-async function api(url, options = {}) {
+function saveSession(session) {
+  state.accessToken = session?.access_token || '';
+  state.refreshToken = session?.refresh_token || state.refreshToken || '';
+  state.expiresAt = Date.now() + Number(session?.expires_in || 3600) * 1000;
+  localStorage.setItem('pt_access_token', state.accessToken);
+  localStorage.setItem('pt_refresh_token', state.refreshToken);
+  localStorage.setItem('pt_expires_at', String(state.expiresAt));
+  $('authBtn').textContent = state.accessToken ? 'Account' : 'Sign in';
+}
+
+function clearSession() {
+  state.accessToken = ''; state.refreshToken = ''; state.expiresAt = 0;
+  ['pt_access_token', 'pt_refresh_token', 'pt_expires_at'].forEach(key => localStorage.removeItem(key));
+  $('authBtn').textContent = 'Sign in';
+}
+
+async function refreshSession() {
+  if (!state.refreshToken) return false;
+  if (!state.authRefresh) state.authRefresh = fetch('/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: state.refreshToken }) })
+    .then(async response => ({ response, data: await response.json().catch(() => ({})) }))
+    .then(({ response, data }) => { if (!response.ok || !data.session?.access_token) throw new Error(data.error || 'Session expired'); saveSession(data.session); return true; })
+    .catch(() => { clearSession(); return false; })
+    .finally(() => { state.authRefresh = null; });
+  return state.authRefresh;
+}
+
+async function api(url, options = {}, retried = false) {
+  if (state.refreshToken && state.expiresAt && Date.now() > state.expiresAt - 60000 && !String(url).startsWith('/api/auth/')) await refreshSession();
   const response = await fetch(url, {
     ...options,
     headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, 'X-Portfolio-Id': state.portfolio, ...(state.accessToken ? { Authorization: `Bearer ${state.accessToken}` } : {}), ...(options.headers || {}) }
   });
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && state.refreshToken && !retried && await refreshSession()) return api(url, options, true);
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
 }
@@ -100,11 +128,12 @@ async function refreshWallet() {
   $('wEquity').textContent = money(wallet.equityUsd);
   setPnl('wRealized', wallet.realizedPnlUsd);
   setPnl('wUnrealized', wallet.unrealizedPnlUsd);
-  $('solValue').textContent = number(wallet.equitySol) === null ? 'SOL price unavailable' : `${Number(wallet.equitySol).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })} SOL`;
+  $('solValue').textContent = number(wallet.equitySol) === null ? 'SOL price unavailable' : `${Number(wallet.equitySol).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })} SOL · 1 SOL = ${price(wallet.solPriceUsd)}`;
   $('lastSync').textContent = 'Updated just now';
 }
 
 function selectToken(token) {
+  selectTab('trade');
   state.token = token;
   hide('chainChooser');
   message('resolveError', '');
@@ -193,7 +222,7 @@ async function refreshPositions() {
   positions.forEach((position) => {
     const row = document.createElement('article'); row.className = 'position';
     const unavailable = number(position.currentPriceUsd) === null;
-    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
+    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid position-market"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div><div><span>Market cap</span><strong>${compact(position.marketCapUsd)}</strong></div><div><span>Liquidity</span><strong>${compact(position.liquidityUsd)}</strong></div><div><span>24h volume</span><strong>${compact(position.volume24hUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
     row.querySelector('.asset-name strong').textContent = position.symbol || position.tokenName || 'TOKEN';
     row.querySelector('.asset-name span').textContent = `${chainName(position.chain)} · ${quantity(position.quantity)} tokens`;
     row.querySelector('.sell-button').addEventListener('click', () => reviewSell(position)); list.appendChild(row);
@@ -286,11 +315,29 @@ function bindEvents() {
   $('portfolioSelect').addEventListener('change', async event => { state.portfolio=event.target.value; localStorage.setItem('pt_portfolio',state.portfolio); await refreshV2(); await refreshAll(); });
   $('authBtn').addEventListener('click', authDialog);
   $('refreshTrending').addEventListener('click', loadTrending);
+  document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.tab)));
+}
+
+function selectTab(tab) {
+  document.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+  document.querySelectorAll('[data-view]').forEach(section => section.classList.toggle('hidden', section.dataset.view !== tab));
+  if (!/jsdom/i.test(navigator.userAgent)) window.scrollTo?.({ top: 0, behavior: 'smooth' });
 }
 
 async function loadPortfolios(){try{const {portfolios=[]}=await api('/api/portfolios');const select=$('portfolioSelect');select.replaceChildren();portfolios.forEach(p=>{const o=document.createElement('option');o.value=p.key;o.textContent=p.name;o.selected=p.key===state.portfolio;select.appendChild(o);});}catch(_) {}}
 function createPortfolio(){openModal('New portfolio','<label class="form-label">Portfolio name</label><input id="portfolioName" class="modal-input" maxlength="40" placeholder="Memecoin strategy">',async()=>{const name=$('portfolioName').value.trim();const {portfolio}=await api('/api/portfolios',{method:'POST',body:JSON.stringify({name})});state.portfolio=portfolio.key;localStorage.setItem('pt_portfolio',state.portfolio);await loadPortfolios();await refreshAll();toast('Portfolio created.');},'Create');}
-function authDialog(){openModal('Sign in or create account','<label class="form-label">Email</label><input id="authEmail" class="modal-input" type="email"><label class="form-label" style="margin-top:12px">Password</label><input id="authPassword" class="modal-input" type="password" minlength="8"><div class="quick-amounts"><button id="signupMode" type="button">Create account instead</button></div>',async()=>{const action=$('signupMode').dataset.mode==='signup'?'signup':'login';const {session}=await api('/api/auth/'+action,{method:'POST',body:JSON.stringify({email:$('authEmail').value,password:$('authPassword').value})});if(session.access_token){state.accessToken=session.access_token;localStorage.setItem('pt_access_token',state.accessToken);$('authBtn').textContent='Signed in';await loadPortfolios();await refreshAll();}else toast('Check your email to confirm the account.');},'Sign in');setTimeout(()=>{$('signupMode').onclick=()=>{$('signupMode').dataset.mode='signup';$('modalConfirm').textContent='Create account';};},0);}
+function authDialog(){
+  if (state.accessToken) return openModal('Your account','<p class="trade-note">You are signed in. Your portfolios are linked to this account.</p>',async()=>{clearSession();state.portfolio='default';localStorage.setItem('pt_portfolio','default');await loadPortfolios();await refreshAll();toast('Signed out.');},'Sign out');
+  openModal('Sign in','<div class="auth-tabs"><button id="loginMode" class="active" type="button">Sign in</button><button id="signupMode" type="button">Create account</button></div><label class="form-label">Email</label><input id="authEmail" class="modal-input" type="email" autocomplete="email"><label class="form-label auth-password-label">Password</label><input id="authPassword" class="modal-input" type="password" minlength="8" autocomplete="current-password"><p id="authHelp" class="trade-note">Use the email and password you registered with.</p>',async()=>{
+    const action=$('signupMode').classList.contains('active')?'signup':'login';
+    const email=$('authEmail').value.trim(),password=$('authPassword').value;
+    if(!email||password.length<8)throw new Error('Enter a valid email and a password of at least 8 characters.');
+    const {session}=await api('/api/auth/'+action,{method:'POST',body:JSON.stringify({email,password})});
+    if(session?.access_token){saveSession(session);await loadPortfolios();await refreshAll();toast(action==='signup'?'Account created and signed in.':'Signed in.');}
+    else { state.busy=false; $('modalConfirm').disabled=false; $('modalConfirm').textContent='Sign in'; $('loginMode').click(); throw new Error('Account created. Confirm the email Supabase sent you, then sign in here.'); }
+  },'Sign in');
+  setTimeout(()=>{const setMode=signup=>{const login=$('loginMode'),create=$('signupMode');login.classList.toggle('active',!signup);create.classList.toggle('active',signup);$('modalTitle').textContent=signup?'Create account':'Sign in';$('modalConfirm').textContent=signup?'Create account':'Sign in';$('authHelp').textContent=signup?'Supabase may email you a confirmation link before the first sign-in.':'Use the email and password you registered with.';$('authPassword').autocomplete=signup?'new-password':'current-password';};$('loginMode').onclick=()=>setMode(false);$('signupMode').onclick=()=>setMode(true);},0);
+}
 async function loadStats(){try{const {statistics:s}=await api('/api/statistics');$('statistics').innerHTML=`<div><span>Win rate</span><strong>${Number(s.winRate).toFixed(1)}%</strong></div><div><span>Closed trades</span><strong>${s.closedTrades}</strong></div><div><span>Total P&amp;L</span><strong class="${tone(s.totalPnlUsd)}">${signedMoney(s.totalPnlUsd)}</strong></div><div><span>Total fees</span><strong>${money(s.totalFeesUsd)}</strong></div>`;}catch(_) {}}
 async function loadHistory(){try{const {history=[]}=await api('/api/equity-history');const svg=$('equityChart');if(history.length<2){svg.innerHTML='<text x="300" y="80" text-anchor="middle" fill="#647084" font-size="14">History appears as your portfolio updates</text>';return;}const values=history.map(x=>Number(x.equityUsd));const min=Math.min(...values),max=Math.max(...values),range=max-min||1;const pts=values.map((v,i)=>`${i/(values.length-1)*600},${150-(v-min)/range*135}`).join(' ');svg.innerHTML=`<polyline class="chart-line" points="${pts}"/>`;}catch(_) {}}
 async function loadTrending(){try{const {tokens=[]}=await api('/api/trending');const list=$('trendingList');list.replaceChildren();tokens.forEach(t=>{const b=document.createElement('button');b.className='result-item';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);list.appendChild(b);});}catch(error){toast(error.message,true);}}
@@ -302,6 +349,7 @@ async function refreshV2(){await Promise.allSettled([loadPortfolios(),loadStats(
 
 async function init() {
   bindEvents();
+  if (state.accessToken) $('authBtn').textContent = 'Account';
   await loadConfig();
   await refreshAll();
   await refreshV2();

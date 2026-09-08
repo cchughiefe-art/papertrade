@@ -47,6 +47,7 @@ app.use(async (req, res, next) => {
     try {
       const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, { headers: { authorization: `Bearer ${bearer}`, apikey: process.env.SUPABASE_ANON_KEY } });
       if (response.ok) req.paperOwner = (await response.json()).id || null;
+      else if (!req.path.startsWith('/api/auth/')) return res.status(401).json({ ok: false, error: 'Session expired. Please sign in again.' });
     } catch (_) {}
   }
   next();
@@ -1310,11 +1311,14 @@ app.get('/api/trades.csv', async (req, res) => {
 app.post('/api/auth/:action', async (req, res) => {
   try {
     const action = req.params.action;
-    if (!['signup', 'login'].includes(action) || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) throw new Error('Authentication is not configured');
-    const endpoint = action === 'signup' ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password';
-    const response = await fetch(`${process.env.SUPABASE_URL}${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: process.env.SUPABASE_ANON_KEY }, body: JSON.stringify({ email: req.body?.email, password: req.body?.password }) });
+    if (!['signup', 'login', 'refresh'].includes(action) || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) throw new Error('Authentication is not configured');
+    const endpoint = action === 'signup' ? '/auth/v1/signup' : `/auth/v1/token?grant_type=${action === 'refresh' ? 'refresh_token' : 'password'}`;
+    const body = action === 'refresh'
+      ? { refresh_token: req.body?.refreshToken }
+      : { email: String(req.body?.email || '').trim(), password: req.body?.password };
+    const response = await fetch(`${process.env.SUPABASE_URL}${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: process.env.SUPABASE_ANON_KEY }, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) return res.status(response.status).json({ ok: false, error: data.msg || data.error_description || 'Authentication failed' });
+    if (!response.ok) return res.status(response.status).json({ ok: false, error: data.msg || data.message || data.error_description || 'Authentication failed' });
     res.json({ ok: true, session: data });
   } catch (error) { errorResponse(res, error); }
 });

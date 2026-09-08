@@ -15,6 +15,7 @@
       <div class="market-status" id="marketStatus"><span class="status-dot"></span><span>Market live</span></div>
     </header>
     <section class="v2bar card"><select id="portfolioSelect" aria-label="Portfolio"><option value="default">Main portfolio</option></select><button id="newPortfolioBtn" class="button button-secondary" type="button">New portfolio</button><button id="authBtn" class="button button-secondary" type="button">Sign in</button><a class="button button-secondary" href="/api/trades.csv" id="exportBtn">Export CSV</a></section>
+    <nav class="app-tabs" aria-label="Main navigation"><button class="active" data-tab="trade" type="button">Trade</button><button data-tab="portfolio" type="button">Portfolio</button><button data-tab="discover" type="button">Discover</button><button data-tab="activity" type="button">Activity</button></nav>
     <main>
       <section class="hero card">
         <div class="hero-copy"><span class="eyebrow">Portfolio balance</span><h1 id="wEquity">$0.00</h1><div class="hero-meta"><span id="solValue">— SOL</span><span class="separator">•</span><span id="lastSync">Updating…</span></div></div>
@@ -23,22 +24,22 @@
           <div class="metric"><span>Cash</span><strong id="wCash">$0.00</strong></div><div class="metric"><span>Invested</span><strong id="wPositions">$0.00</strong></div><div class="metric"><span>Realized P&amp;L</span><strong id="wRealized">$0.00</strong></div><div class="metric"><span>Unrealized P&amp;L</span><strong id="wUnrealized">$0.00</strong></div>
         </div>
       </section>
-      <section class="insights-grid">
+      <section class="insights-grid hidden" data-view="portfolio">
         <div class="card insight"><div class="section-heading"><div><span class="eyebrow">Performance</span><h2>Portfolio history</h2></div></div><svg id="equityChart" viewBox="0 0 600 160" role="img" aria-label="Portfolio equity chart"></svg></div>
         <div class="card insight"><div class="section-heading"><div><span class="eyebrow">Results</span><h2>Statistics</h2></div></div><div id="statistics" class="metrics-mini"></div></div>
       </section>
-      <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Discovery</span><h2>Trending tokens</h2></div><button id="refreshTrending" class="text-button">Refresh</button></div><div id="trendingList" class="result-list"></div></section>
+      <section class="card list-card hidden" data-view="discover"><div class="section-heading"><div><span class="eyebrow">Discovery</span><h2>Trending tokens</h2></div><button id="refreshTrending" class="text-button">Refresh</button></div><div id="trendingList" class="result-list"></div></section>
       <div class="content-grid">
-        <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Saved</span><h2>Watchlist</h2></div></div><div id="watchlistList" class="result-list"></div></section>
-        <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Cash activity</span><h2>Transactions</h2></div></div><div id="balanceHistory"></div></section>
+        <section class="card list-card hidden" data-view="discover"><div class="section-heading"><div><span class="eyebrow">Saved</span><h2>Watchlist</h2></div></div><div id="watchlistList" class="result-list"></div></section>
+        <section class="card list-card hidden" data-view="activity"><div class="section-heading"><div><span class="eyebrow">Cash activity</span><h2>Transactions</h2></div></div><div id="balanceHistory"></div></section>
       </div>
-      <section class="search-card card">
+      <section class="search-card card" data-view="trade">
         <div class="section-heading"><div><span class="eyebrow">Discover</span><h2>Find a token</h2></div><span class="hint">Name, symbol or contract</span></div>
         <form id="searchForm" class="search-row"><label class="search-input"><span aria-hidden="true">⌕</span><input id="tokenInput" type="search" autocomplete="off" spellcheck="false" placeholder="Try SOL, PEPE, or paste an address" aria-label="Token search"></label><button id="loadBtn" class="button button-primary" type="submit">Search</button></form>
         <div id="searchStatus" class="inline-status hidden" role="status"><span class="spinner"></span>Searching live markets…</div><div id="resolveError" class="message error hidden" role="alert"></div>
         <div id="chainChooser" class="results hidden"><div class="results-title">Select the correct token</div><div id="chainButtons" class="result-list"></div></div>
       </section>
-      <section class="token-card card hidden" id="tokenCard">
+      <section class="token-card card hidden" id="tokenCard" data-view="trade">
         <div class="token-header"><div class="token-identity"><div class="token-icon" id="tIcon">?</div><div><div class="token-name-line"><h2 id="tSymbol">—</h2><span id="tChain" class="network-pill">—</span></div><p id="tName">—</p></div></div><div class="price-block"><strong id="tPrice">—</strong><span id="tChange">—</span><span id="tStale" class="stale hidden">Price stale</span></div></div>
         <div class="market-grid"><div><span>Market cap</span><strong id="tMcap">—</strong></div><div><span>Liquidity</span><strong id="tLiq">—</strong></div><div><span>24h volume</span><strong id="tVol">—</strong></div><div><span>Last update</span><strong id="tUpdated">—</strong></div></div>
         <div id="riskWarnings" class="risk-list hidden"></div>
@@ -46,8 +47,8 @@
         <div class="trade-box"><div class="trade-box-head"><div><span class="eyebrow">Paper order</span><h3>Buy <span id="buySymbol">token</span></h3></div><span id="tDex" class="hint">—</span></div><div class="quick-amounts" aria-label="Quick amounts"><button type="button" data-amount="25">$25</button><button type="button" data-amount="50">$50</button><button type="button" data-amount="100">$100</button><button type="button" data-amount="250">$250</button></div><div class="amount-row"><label><span>$</span><input id="amountInput" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Amount in USD" aria-label="Investment amount"></label><button id="buyBtn" class="button button-success" type="button">Review buy</button></div><div id="buyError" class="message error hidden" role="alert"></div><p class="trade-note" id="feeNote">Live price plus simulated fee and slippage.</p></div>
       </section>
       <div class="content-grid">
-        <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Portfolio</span><h2>Open positions</h2></div><span id="positionCount" class="count-pill">0</span></div><div id="positionsList"><div class="empty-state"><span>◎</span><strong>No open positions</strong><p>Search for a token and place your first paper trade.</p></div></div></section>
-        <section class="card list-card"><div class="section-heading"><div><span class="eyebrow">Activity</span><h2>Trade history</h2></div></div><div id="tradesList"><div class="empty-state"><span>↕</span><strong>No trades yet</strong><p>Your buys and sells will appear here.</p></div></div></section>
+        <section class="card list-card hidden" data-view="portfolio"><div class="section-heading"><div><span class="eyebrow">Portfolio</span><h2>Open positions</h2></div><span id="positionCount" class="count-pill">0</span></div><div id="positionsList"><div class="empty-state"><span>◎</span><strong>No open positions</strong><p>Search for a token and place your first paper trade.</p></div></div></section>
+        <section class="card list-card hidden" data-view="activity"><div class="section-heading"><div><span class="eyebrow">Activity</span><h2>Trade history</h2></div></div><div id="tradesList"><div class="empty-state"><span>↕</span><strong>No trades yet</strong><p>Your buys and sells will appear here.</p></div></div></section>
       </div>
     </main>
     <footer><span>Simulation only</span><span>Live prices, no real funds</span><span>No wallet connection</span></footer>

@@ -2,8 +2,10 @@ const dexscreener = require('./dexscreener');
 const gecko = require('./geckoterminal');
 
 const cache = new Map();
+const inFlight = new Map();
 
-const PRICE_TTL = 6000;
+const PRICE_TTL = 15000;
+const STALE_TTL = 120000;
 const TOKEN_TTL = 30000;
 const MISS_TTL = 5000;
 
@@ -22,7 +24,7 @@ function getCached(k) {
 }
 
 function setCached(k, value, ttl) {
-  cache.set(k, { value, expires: Date.now() + ttl });
+  cache.set(k, { value, expires: Date.now() + ttl, staleUntil: Date.now() + STALE_TTL });
   if (cache.size > 2000) {
     const first = cache.keys().next().value;
     if (first) cache.delete(first);
@@ -78,36 +80,48 @@ async function getPrice(chain, address) {
   const cached = getCached(k);
   if (isUsablePrice(cached)) return cached;
 
-  let result = null;
-  try {
-    result = await dexscreener.getPrice(address, chain);
-  } catch (_) {}
+  if (inFlight.has(k)) return inFlight.get(k);
+  const request = (async () => {
+    let result = null;
+    try { result = await dexscreener.getPrice(address, chain); } catch (_) {}
 
-  if (!isUsablePrice(result)) {
-    try {
-      result = await gecko.getPrice(address, chain);
-    } catch (_) {}
-  }
+    if (!isUsablePrice(result)) {
+      try { result = await gecko.getPrice(address, chain); } catch (_) {}
+    }
 
-  if (isUsablePrice(result)) {
-    setCached(k, result, PRICE_TTL);
-    return result;
-  }
-  return null;
+    if (isUsablePrice(result)) { setCached(k, result, PRICE_TTL); return result; }
+    const old = cache.get(k);
+    return old && Date.now() <= old.staleUntil ? { ...old.value, stale: true } : null;
+  })();
+  inFlight.set(k, request);
+  try { return await request; } finally { inFlight.delete(k); }
 }
 
-async function getPrices(tokens, concurrency = 5) {
+async function getPrices(tokens) {
   const input = Array.isArray(tokens) ? tokens : [];
   const results = new Array(input.length);
-  let cursor = 0;
-  async function worker() {
-    while (cursor < input.length) {
-      const index = cursor++;
-      const token = input[index] || {};
-      results[index] = await getPrice(token.chain, token.address).catch(() => null);
-    }
+  const missing = [];
+  input.forEach((token, index) => {
+    const cached = getCached(key(token?.chain, token?.address));
+    if (isUsablePrice(cached)) results[index] = cached;
+    else missing.push({ ...token, index });
+  });
+  if (missing.length) {
+    let bulk = [];
+    try { bulk = await dexscreener.getPrices(missing); } catch (_) {}
+    await Promise.all(missing.map(async (token, i) => {
+      let result = bulk[i];
+      if (!isUsablePrice(result)) {
+        try { result = await gecko.getPrice(token.address, token.chain); } catch (_) {}
+      }
+      if (isUsablePrice(result)) setCached(key(token.chain, token.address), result, PRICE_TTL);
+      else {
+        const old = cache.get(key(token.chain, token.address));
+        if (old && Date.now() <= old.staleUntil) result = { ...old.value, stale: true };
+      }
+      results[token.index] = isUsablePrice(result) ? result : null;
+    }));
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, input.length) }, worker));
   return results;
 }
 
@@ -150,7 +164,11 @@ async function getSolPrice() {
 }
 
 async function getTrending() {
-  return dexscreener.getTrending();
+  const cached = getCached('trending');
+  if (Array.isArray(cached)) return cached;
+  const tokens = await dexscreener.getTrending();
+  setCached('trending', tokens, 60000);
+  return tokens;
 }
 
 module.exports = {

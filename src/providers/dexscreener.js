@@ -255,18 +255,45 @@ async function getPrice(address, chainHint = null) {
   return resolveToken(chainHint, address);
 }
 
+async function getPrices(tokens) {
+  const input = Array.isArray(tokens) ? tokens : [];
+  const results = new Array(input.length).fill(null);
+  const groups = new Map();
+
+  input.forEach((token, index) => {
+    const chain = String(token?.chain || '').trim().toLowerCase();
+    const address = String(token?.address || '').trim();
+    if (!chain || !address) return;
+    if (!groups.has(chain)) groups.set(chain, []);
+    groups.get(chain).push({ address, index });
+  });
+
+  for (const [chain, entries] of groups) {
+    for (let offset = 0; offset < entries.length; offset += 30) {
+      const chunk = entries.slice(offset, offset + 30);
+      const addresses = [...new Set(chunk.map(item => item.address))];
+      const data = await fetchJson(
+        `${BASE_URL}/tokens/v1/${encodeURIComponent(chain)}/${addresses.map(encodeURIComponent).join(',')}`
+      );
+      chunk.forEach(item => {
+        results[item.index] = choose(data, item.address, chain);
+      });
+    }
+  }
+  return results;
+}
+
 async function getTrending() {
   const boosts = await fetchJson(`${BASE_URL}/token-boosts/top/v1`);
   const selected = Array.isArray(boosts) ? boosts.slice(0, 20) : [];
-  const tokens = await Promise.all(selected.map(item =>
-    resolveToken(item.chainId, item.tokenAddress).catch(() => null)
-  ));
+  const tokens = await getPrices(selected.map(item => ({ chain: item.chainId, address: item.tokenAddress }))).catch(() => []);
   return tokens.filter(Boolean).sort((a, b) => b.liquidityUsd - a.liquidityUsd).slice(0, 12);
 }
 
 module.exports = {
   resolveToken,
   getPrice,
+  getPrices,
   searchTokens,
   getTrending
 };
