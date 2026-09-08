@@ -29,6 +29,7 @@ const pool = DATABASE_URL
   : null;
 
 let ready = null;
+let databaseStatus = { ready: false, error: null, checkedAt: null };
 
 async function query(text, params = []) {
   if (!pool) {
@@ -56,6 +57,12 @@ async function initDb() {
         'DATABASE_URL is required. Add your Supabase connection string on Render.'
       );
     }
+
+    await query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
 
     await query(`
       CREATE TABLE IF NOT EXISTS wallets (
@@ -116,6 +123,47 @@ async function initDb() {
       )
     `);
 
+    await query(`CREATE TABLE IF NOT EXISTS portfolios (
+      id SERIAL PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      portfolio_key TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(owner_id, portfolio_key)
+    )`);
+
+    await query(`CREATE TABLE IF NOT EXISTS equity_history (
+      id BIGSERIAL PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      equity_usd DOUBLE PRECISION NOT NULL,
+      cash_usd DOUBLE PRECISION NOT NULL,
+      position_value_usd DOUBLE PRECISION NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+
+    await query(`CREATE TABLE IF NOT EXISTS watchlist (
+      id SERIAL PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      token_address TEXT NOT NULL,
+      token_name TEXT,
+      symbol TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(session_id, chain, token_address)
+    )`);
+
+    await query(`CREATE TABLE IF NOT EXISTS conditional_orders (
+      id SERIAL PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      position_id INTEGER NOT NULL,
+      order_type TEXT NOT NULL CHECK (order_type IN ('stop_loss','take_profit')),
+      trigger_price_usd DOUBLE PRECISION NOT NULL,
+      percent_to_sell DOUBLE PRECISION NOT NULL DEFAULT 100,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      executed_at TIMESTAMPTZ
+    )`);
+
     await query(
       `CREATE INDEX IF NOT EXISTS idx_positions_session ON positions(session_id)`
     );
@@ -125,6 +173,10 @@ async function initDb() {
     await query(
       `CREATE INDEX IF NOT EXISTS idx_balance_transactions_session ON balance_transactions(session_id)`
     );
+    await query(`CREATE INDEX IF NOT EXISTS idx_equity_history_session_time ON equity_history(session_id, recorded_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_watchlist_session ON watchlist(session_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_orders_session_status ON conditional_orders(session_id, status)`);
+    await query(`INSERT INTO schema_migrations(version, name) VALUES (1, 'papertrade_v2_core') ON CONFLICT DO NOTHING`);
 
     // Safe backfills
     await query(`
@@ -149,10 +201,32 @@ async function initDb() {
          OR execution_price_usd IS NULL
     `);
 
+    databaseStatus = { ready: true, error: null, checkedAt: new Date().toISOString() };
     console.log('Database: Supabase/Postgres (durable)');
   })();
 
+  ready.catch((error) => {
+    databaseStatus = { ready: false, error: error.message, checkedAt: new Date().toISOString() };
+    ready = null;
+  });
+
   return ready;
+}
+
+function getDatabaseStatus() {
+  return { configured: Boolean(DATABASE_URL), ...databaseStatus };
+}
+
+async function recordEquity(sessionId, snapshot) {
+  await initDb();
+  const last = await one(`SELECT recorded_at FROM equity_history WHERE session_id=$1 ORDER BY recorded_at DESC LIMIT 1`, [sessionId]);
+  if (last && Date.now() - Date.parse(last.recorded_at) < 60000) return;
+  await query(`INSERT INTO equity_history(session_id,equity_usd,cash_usd,position_value_usd) VALUES($1,$2,$3,$4)`, [sessionId, snapshot.equityUsd, snapshot.cashUsd, snapshot.positionValueUsd]);
+}
+
+async function getEquityHistory(sessionId, limit = 100) {
+  await initDb();
+  return many(`SELECT equity_usd AS "equityUsd", cash_usd AS "cashUsd", position_value_usd AS "positionValueUsd", recorded_at AS "recordedAt" FROM equity_history WHERE session_id=$1 ORDER BY recorded_at DESC LIMIT $2`, [sessionId, Math.min(500, Math.max(1, limit))]);
 }
 
 async function getOrCreateWallet(sessionId) {
@@ -285,5 +359,8 @@ module.exports = {
   getBalanceTransactions,
   query,
   one,
-  many
+  many,
+  getDatabaseStatus,
+  recordEquity,
+  getEquityHistory
 };

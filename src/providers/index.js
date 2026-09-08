@@ -96,6 +96,21 @@ async function getPrice(chain, address) {
   return null;
 }
 
+async function getPrices(tokens, concurrency = 5) {
+  const input = Array.isArray(tokens) ? tokens : [];
+  const results = new Array(input.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < input.length) {
+      const index = cursor++;
+      const token = input[index] || {};
+      results[index] = await getPrice(token.chain, token.address).catch(() => null);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, input.length) }, worker));
+  return results;
+}
+
 async function searchTokens(query) {
   const clean = String(query || '').trim();
   if (!clean) return [];
@@ -134,9 +149,15 @@ async function getSolPrice() {
   return Number(result.priceUsd);
 }
 
+async function getTrending() {
+  return dexscreener.getTrending();
+}
+
 module.exports = {
   resolveToken,
   getPrice,
+  getPrices,
   getSolPrice,
-  searchTokens
+  searchTokens,
+  getTrending
 };

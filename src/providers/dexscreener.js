@@ -255,8 +255,18 @@ async function getPrice(address, chainHint = null) {
   return resolveToken(chainHint, address);
 }
 
+async function getTrending() {
+  const boosts = await fetchJson(`${BASE_URL}/token-boosts/top/v1`);
+  const selected = Array.isArray(boosts) ? boosts.slice(0, 20) : [];
+  const tokens = await Promise.all(selected.map(item =>
+    resolveToken(item.chainId, item.tokenAddress).catch(() => null)
+  ));
+  return tokens.filter(Boolean).sort((a, b) => b.liquidityUsd - a.liquidityUsd).slice(0, 12);
+}
+
 module.exports = {
   resolveToken,
   getPrice,
-  searchTokens
+  searchTokens,
+  getTrending
 };

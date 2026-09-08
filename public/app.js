@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 10000;
-const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5 };
+const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '' };
 let toastTimer;
 let modalAction = null;
 let sessionId = localStorage.getItem('pt_session');
@@ -15,7 +15,7 @@ if (!sessionId) {
 async function api(url, options = {}) {
   const response = await fetch(url, {
     ...options,
-    headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...(options.headers || {}) }
+    headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, 'X-Portfolio-Id': state.portfolio, ...(state.accessToken ? { Authorization: `Bearer ${state.accessToken}` } : {}), ...(options.headers || {}) }
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
@@ -115,10 +115,14 @@ function selectToken(token) {
   $('tChain').textContent = chainName(token.chain);
   $('tDex').textContent = token.dex || token.source || 'Live market';
   updateTokenDisplay(token);
+  const risks = Array.isArray(token.riskWarnings) ? token.riskWarnings : [];
+  $('riskWarnings').innerHTML = risks.map(item => `<div>⚠ ${item.message}</div>`).join('');
+  $('riskWarnings').classList.toggle('hidden', !risks.length);
   $('tAddr').textContent = token.address || '—';
   $('amountInput').value = '';
   message('buyError', '');
   show('tokenCard');
+  if (!$('watchBtn')) { const b=document.createElement('button'); b.id='watchBtn'; b.className='text-button watch-button'; b.type='button'; b.textContent='Add to watchlist'; b.onclick=addWatch; $('copyAddressBtn').after(b); }
   $('tokenCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -189,10 +193,11 @@ async function refreshPositions() {
   positions.forEach((position) => {
     const row = document.createElement('article'); row.className = 'position';
     const unavailable = number(position.currentPriceUsd) === null;
-    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></div>`;
+    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
     row.querySelector('.asset-name strong').textContent = position.symbol || position.tokenName || 'TOKEN';
     row.querySelector('.asset-name span').textContent = `${chainName(position.chain)} · ${quantity(position.quantity)} tokens`;
     row.querySelector('.sell-button').addEventListener('click', () => reviewSell(position)); list.appendChild(row);
+    row.querySelector('.exits').addEventListener('click', () => setExit(position));
   });
 }
 
@@ -277,12 +282,30 @@ function bindEvents() {
   $('modalCancel').addEventListener('click', closeModal); $('modalConfirm').addEventListener('click', confirmModal);
   document.querySelectorAll('[data-amount]').forEach((button) => button.addEventListener('click', () => { $('amountInput').value = button.dataset.amount; message('buyError', ''); }));
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
+  $('newPortfolioBtn').addEventListener('click', createPortfolio);
+  $('portfolioSelect').addEventListener('change', async event => { state.portfolio=event.target.value; localStorage.setItem('pt_portfolio',state.portfolio); await refreshV2(); await refreshAll(); });
+  $('authBtn').addEventListener('click', authDialog);
+  $('refreshTrending').addEventListener('click', loadTrending);
 }
+
+async function loadPortfolios(){try{const {portfolios=[]}=await api('/api/portfolios');const select=$('portfolioSelect');select.replaceChildren();portfolios.forEach(p=>{const o=document.createElement('option');o.value=p.key;o.textContent=p.name;o.selected=p.key===state.portfolio;select.appendChild(o);});}catch(_) {}}
+function createPortfolio(){openModal('New portfolio','<label class="form-label">Portfolio name</label><input id="portfolioName" class="modal-input" maxlength="40" placeholder="Memecoin strategy">',async()=>{const name=$('portfolioName').value.trim();const {portfolio}=await api('/api/portfolios',{method:'POST',body:JSON.stringify({name})});state.portfolio=portfolio.key;localStorage.setItem('pt_portfolio',state.portfolio);await loadPortfolios();await refreshAll();toast('Portfolio created.');},'Create');}
+function authDialog(){openModal('Sign in or create account','<label class="form-label">Email</label><input id="authEmail" class="modal-input" type="email"><label class="form-label" style="margin-top:12px">Password</label><input id="authPassword" class="modal-input" type="password" minlength="8"><div class="quick-amounts"><button id="signupMode" type="button">Create account instead</button></div>',async()=>{const action=$('signupMode').dataset.mode==='signup'?'signup':'login';const {session}=await api('/api/auth/'+action,{method:'POST',body:JSON.stringify({email:$('authEmail').value,password:$('authPassword').value})});if(session.access_token){state.accessToken=session.access_token;localStorage.setItem('pt_access_token',state.accessToken);$('authBtn').textContent='Signed in';await loadPortfolios();await refreshAll();}else toast('Check your email to confirm the account.');},'Sign in');setTimeout(()=>{$('signupMode').onclick=()=>{$('signupMode').dataset.mode='signup';$('modalConfirm').textContent='Create account';};},0);}
+async function loadStats(){try{const {statistics:s}=await api('/api/statistics');$('statistics').innerHTML=`<div><span>Win rate</span><strong>${Number(s.winRate).toFixed(1)}%</strong></div><div><span>Closed trades</span><strong>${s.closedTrades}</strong></div><div><span>Total P&amp;L</span><strong class="${tone(s.totalPnlUsd)}">${signedMoney(s.totalPnlUsd)}</strong></div><div><span>Total fees</span><strong>${money(s.totalFeesUsd)}</strong></div>`;}catch(_) {}}
+async function loadHistory(){try{const {history=[]}=await api('/api/equity-history');const svg=$('equityChart');if(history.length<2){svg.innerHTML='<text x="300" y="80" text-anchor="middle" fill="#647084" font-size="14">History appears as your portfolio updates</text>';return;}const values=history.map(x=>Number(x.equityUsd));const min=Math.min(...values),max=Math.max(...values),range=max-min||1;const pts=values.map((v,i)=>`${i/(values.length-1)*600},${150-(v-min)/range*135}`).join(' ');svg.innerHTML=`<polyline class="chart-line" points="${pts}"/>`;}catch(_) {}}
+async function loadTrending(){try{const {tokens=[]}=await api('/api/trending');const list=$('trendingList');list.replaceChildren();tokens.forEach(t=>{const b=document.createElement('button');b.className='result-item';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);list.appendChild(b);});}catch(error){toast(error.message,true);}}
+async function addWatch(){await api('/api/watchlist',{method:'POST',body:JSON.stringify(state.token)});toast('Added to watchlist.');}
+async function loadWatchlist(){try{const {tokens=[]}=await api('/api/watchlist');const list=$('watchlistList');list.replaceChildren();if(!tokens.length){list.innerHTML=emptyState('☆','Watchlist empty','Save tokens to follow them without buying.');return;}tokens.forEach(t=>{const b=document.createElement('button');b.className='result-item';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);list.appendChild(b);});}catch(_) {}}
+async function loadBalanceHistory(){try{const {history=[]}=await api('/api/balance-history');const list=$('balanceHistory');list.innerHTML=history.length?history.slice(0,20).map(t=>`<div class="trade-item row-between"><span><strong>${t.type==='deposit'?'Deposit':'Withdrawal'}</strong><small class="updated"> ${dateTime(t.createdAt)}</small></span><strong class="${t.type==='deposit'?'positive':'negative'}">${t.type==='deposit'?'+':'-'}${money(t.amountUsd)}</strong></div>`).join(''):emptyState('↕','No cash activity','Deposits and withdrawals appear here.');}catch(_) {}}
+function setExit(position){openModal(`Set exits for ${position.symbol}`,'<label class="form-label">Stop-loss price (optional)</label><input id="stopPrice" class="modal-input" type="number" step="any"><label class="form-label" style="margin-top:12px">Take-profit price (optional)</label><input id="takePrice" class="modal-input" type="number" step="any">',async()=>{const stop=Number($('stopPrice').value),take=Number($('takePrice').value);if(!(stop>0)&&!(take>0))throw new Error('Enter at least one trigger price.');if(stop>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'stop_loss',triggerPriceUsd:stop,percentToSell:100})});if(take>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'take_profit',triggerPriceUsd:take,percentToSell:100})});toast('Exit orders saved.');},'Save exits');}
+async function refreshV2(){await Promise.allSettled([loadPortfolios(),loadStats(),loadHistory(),loadWatchlist(),loadBalanceHistory()]);}
 
 async function init() {
   bindEvents();
   await loadConfig();
   await refreshAll();
+  await refreshV2();
+  await loadTrending();
   setInterval(async () => { await Promise.allSettled([refreshCurrentToken(), refreshAll({ quiet: true })]); }, POLL_MS);
 }
 

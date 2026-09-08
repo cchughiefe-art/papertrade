@@ -4,8 +4,10 @@ const path = require('path');
 const {
   resolveToken,
   getPrice,
+  getPrices,
   getSolPrice,
-  searchTokens
+  searchTokens,
+  getTrending
 } = require('./src/providers');
 
 const {
@@ -24,8 +26,10 @@ const {
   getBalanceHistory,
   reset
 } = require('./src/trading/engine');
+const { initDb, getDatabaseStatus, recordEquity, getEquityHistory } = require('./src/database/db');
 
 const app = express();
+const { query, many, one } = require('./src/database/db');
 
 const PORT =
   Number(process.env.PORT) || 10000;
@@ -35,6 +39,18 @@ app.use(
     limit: '100kb'
   })
 );
+
+app.use(async (req, res, next) => {
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  req.paperOwner = null;
+  if (bearer && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+    try {
+      const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, { headers: { authorization: `Bearer ${bearer}`, apikey: process.env.SUPABASE_ANON_KEY } });
+      if (response.ok) req.paperOwner = (await response.json()).id || null;
+    } catch (_) {}
+  }
+  next();
+});
 
 app.use(
   express.static(
@@ -50,9 +66,18 @@ function sessionId(req) {
     typeof supplied === 'string' &&
     supplied.trim()
   ) {
-    return supplied.trim().slice(0, 200);
+    const owner = req.paperOwner || supplied.trim().slice(0, 120);
+    const portfolio = String(req.headers['x-portfolio-id'] || 'default').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'default';
+    return portfolio === 'default' ? owner : `${owner}::${portfolio}`;
   }
 
+  throw new Error('Session ID required');
+}
+
+function ownerId(req) {
+  const supplied = req.headers['x-session-id'];
+  if (req.paperOwner) return req.paperOwner;
+  if (typeof supplied === 'string' && supplied.trim()) return supplied.trim().slice(0, 120);
   throw new Error('Session ID required');
 }
 
@@ -193,15 +218,12 @@ async function liveValuation(id) {
   let positionValueUsd = 0;
   let unrealizedPnlUsd = 0;
 
+  const batch = await getPrices(positions.map(position => ({ chain: position.chain, address: position.tokenAddress })));
   const enriched =
     await Promise.all(
-      positions.map(async position => {
+      positions.map(async (position, index) => {
         try {
-          const rawPrice =
-            await getPrice(
-              position.chain,
-              position.tokenAddress
-            );
+          const rawPrice = batch[index];
 
           const price =
             decoratePrice(rawPrice);
@@ -317,11 +339,25 @@ async function walletResponse(id) {
       await getSolPrice();
   } catch (_) {}
 
-  return walletSummary(
+  const wallet = await walletSummary(
     id,
     solPriceUsd,
     valuation
   );
+  await recordEquity(id, wallet).catch(() => {});
+  return wallet;
+}
+
+function riskWarnings(token) {
+  const warnings = [];
+  const liquidity = Number(token?.liquidityUsd || 0);
+  const change = Math.abs(Number(token?.priceChange24h || 0));
+  if (!liquidity) warnings.push({ level: 'high', code: 'NO_LIQUIDITY', message: 'Liquidity data is unavailable.' });
+  else if (liquidity < CONFIG.lowLiquidityUsd) warnings.push({ level: 'high', code: 'LOW_LIQUIDITY', message: `Liquidity is below $${CONFIG.lowLiquidityUsd.toLocaleString()}.` });
+  if (!Number(token?.marketCapUsd)) warnings.push({ level: 'medium', code: 'NO_MARKET_CAP', message: 'Market-cap data is unavailable.' });
+  if (change >= 50) warnings.push({ level: 'medium', code: 'HIGH_VOLATILITY', message: `Price moved ${change.toFixed(1)}% in 24 hours.` });
+  if (token?.stale || token?.priceAvailable === false) warnings.push({ level: 'high', code: 'STALE_PRICE', message: 'The current price is unavailable or stale.' });
+  return warnings;
 }
 
 /*
@@ -387,7 +423,7 @@ app.get(
           if (token) {
             return res.json({
               ok: true,
-              token
+              token: { ...token, riskWarnings: riskWarnings(token) }
             });
           }
         } catch (_) {
@@ -409,7 +445,7 @@ app.get(
         if (token) {
           return res.json({
             ok: true,
-            token
+            token: { ...token, riskWarnings: riskWarnings(token) }
           });
         }
       } catch (_) {}
@@ -466,7 +502,7 @@ app.get(
 
       res.json({
         ok: true,
-        results
+        results: results.map(token => ({ ...token, riskWarnings: riskWarnings(token) }))
       });
     } catch (error) {
       errorResponse(res, error);
@@ -520,7 +556,7 @@ app.get(
 
       res.json({
         ok: true,
-        token
+        token: { ...token, riskWarnings: riskWarnings(token) }
       });
     } catch (error) {
       errorResponse(res, error);
@@ -1232,6 +1268,131 @@ app.post(
   }
 );
 
+app.get('/api/readiness', async (req, res) => {
+  try {
+    await initDb();
+    res.json({ ok: true, database: getDatabaseStatus() });
+  } catch (error) {
+    res.status(503).json({ ok: false, database: getDatabaseStatus(), error: 'Database unavailable' });
+  }
+});
+
+app.get('/api/equity-history', async (req, res) => {
+  try {
+    const history = await getEquityHistory(sessionId(req), Number(req.query.limit) || 100);
+    res.json({ ok: true, history: history.reverse() });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.get('/api/statistics', async (req, res) => {
+  try {
+    const trades = await getTrades(sessionId(req));
+    const sells = trades.filter(t => t.side === 'SELL');
+    const wins = sells.filter(t => Number(t.pnlUsd) > 0);
+    const totalPnlUsd = sells.reduce((sum, t) => sum + Number(t.pnlUsd || 0), 0);
+    const totalFeesUsd = trades.reduce((sum, t) => sum + Number(t.feeUsd || 0), 0);
+    res.json({ ok: true, statistics: { trades: trades.length, closedTrades: sells.length, wins: wins.length, losses: sells.length - wins.length, winRate: sells.length ? wins.length / sells.length * 100 : 0, totalPnlUsd, totalFeesUsd, bestTradeUsd: sells.length ? Math.max(...sells.map(t => Number(t.pnlUsd || 0))) : 0, worstTradeUsd: sells.length ? Math.min(...sells.map(t => Number(t.pnlUsd || 0))) : 0 } });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.get('/api/trades.csv', async (req, res) => {
+  try {
+    const trades = await getTrades(sessionId(req));
+    const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const header = ['Date','Side','Chain','Symbol','Address','Price USD','Quantity','Amount USD','Fee USD','P&L USD'];
+    const rows = trades.map(t => [t.createdAt,t.side,t.chain,t.symbol,t.tokenAddress,t.priceUsd,t.quantity,t.amountUsd,t.feeUsd,t.pnlUsd]);
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="papertrade-trades.csv"');
+    res.send([header, ...rows].map(row => row.map(quote).join(',')).join('\n'));
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.post('/api/auth/:action', async (req, res) => {
+  try {
+    const action = req.params.action;
+    if (!['signup', 'login'].includes(action) || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) throw new Error('Authentication is not configured');
+    const endpoint = action === 'signup' ? '/auth/v1/signup' : '/auth/v1/token?grant_type=password';
+    const response = await fetch(`${process.env.SUPABASE_URL}${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: process.env.SUPABASE_ANON_KEY }, body: JSON.stringify({ email: req.body?.email, password: req.body?.password }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return res.status(response.status).json({ ok: false, error: data.msg || data.error_description || 'Authentication failed' });
+    res.json({ ok: true, session: data });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.get('/api/portfolios', async (req, res) => {
+  try {
+    await initDb(); const owner = ownerId(req);
+    await query(`INSERT INTO portfolios(owner_id,portfolio_key,name) VALUES($1,'default','Main portfolio') ON CONFLICT DO NOTHING`, [owner]);
+    res.json({ ok: true, portfolios: await many(`SELECT portfolio_key AS "key",name,created_at AS "createdAt" FROM portfolios WHERE owner_id=$1 ORDER BY id`, [owner]) });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.post('/api/portfolios', async (req, res) => {
+  try {
+    await initDb(); const owner = ownerId(req); const name = String(req.body?.name || '').trim().slice(0, 40);
+    if (!name) throw new Error('Portfolio name required');
+    const key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
+    await query(`INSERT INTO portfolios(owner_id,portfolio_key,name) VALUES($1,$2,$3)`, [owner,key,name]);
+    res.json({ ok: true, portfolio: { key, name } });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.get('/api/watchlist', async (req, res) => {
+  try {
+    await initDb(); const id = sessionId(req); const rows = await many(`SELECT id,chain,token_address AS address,token_name AS name,symbol FROM watchlist WHERE session_id=$1 ORDER BY id DESC`, [id]);
+    const prices = await getPrices(rows); res.json({ ok: true, tokens: rows.map((row,i) => ({ ...row, ...(prices[i] || {}), riskWarnings: riskWarnings(prices[i] || row) })) });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.post('/api/watchlist', async (req, res) => {
+  try {
+    await initDb(); const id = sessionId(req); const token = req.body || {};
+    if (!token.chain || !token.address) throw new Error('Token chain and address required');
+    await query(`INSERT INTO watchlist(session_id,chain,token_address,token_name,symbol) VALUES($1,$2,$3,$4,$5) ON CONFLICT(session_id,chain,token_address) DO UPDATE SET token_name=$4,symbol=$5`, [id,token.chain,token.address,token.name || null,token.symbol || null]);
+    res.json({ ok: true });
+  } catch (error) { errorResponse(res, error); }
+});
+
+app.delete('/api/watchlist/:id', async (req, res) => {
+  try { await initDb(); await query(`DELETE FROM watchlist WHERE id=$1 AND session_id=$2`, [Number(req.params.id),sessionId(req)]); res.json({ ok:true }); } catch(error){ errorResponse(res,error); }
+});
+
+app.get('/api/orders', async (req,res) => {
+  try { await initDb(); res.json({ok:true,orders:await many(`SELECT id,position_id AS "positionId",order_type AS "type",trigger_price_usd AS "triggerPriceUsd",percent_to_sell AS "percentToSell",status,created_at AS "createdAt" FROM conditional_orders WHERE session_id=$1 ORDER BY id DESC`,[sessionId(req)])}); } catch(error){errorResponse(res,error);}
+});
+
+app.post('/api/orders', async (req,res) => {
+  try { await initDb(); const id=sessionId(req); const positionId=Number(req.body?.positionId); const type=req.body?.type; const trigger=Number(req.body?.triggerPriceUsd); const percent=Number(req.body?.percentToSell || 100); if(!await getPosition(id,positionId)) throw new Error('Position not found'); if(!['stop_loss','take_profit'].includes(type)||!validPositiveNumber(trigger)||percent<=0||percent>100) throw new Error('Invalid conditional order'); await query(`INSERT INTO conditional_orders(session_id,position_id,order_type,trigger_price_usd,percent_to_sell) VALUES($1,$2,$3,$4,$5)`,[id,positionId,type,trigger,percent]); res.json({ok:true}); } catch(error){errorResponse(res,error);}
+});
+
+app.delete('/api/orders/:id', async(req,res)=>{try{await initDb();await query(`UPDATE conditional_orders SET status='cancelled' WHERE id=$1 AND session_id=$2`,[Number(req.params.id),sessionId(req)]);res.json({ok:true});}catch(error){errorResponse(res,error);}});
+
+app.get('/api/trending', async(req,res)=>{try{const tokens=await getTrending();res.json({ok:true,tokens:tokens.map(token=>({...token,riskWarnings:riskWarnings(token)}))});}catch(error){errorResponse(res,error);}});
+
+async function processConditionalOrders() {
+  if (!getDatabaseStatus().configured) return;
+  await initDb();
+  const orders = await many(`SELECT o.*,p.chain,p.token_address,p.quantity FROM conditional_orders o JOIN positions p ON p.id=o.position_id AND p.session_id=o.session_id WHERE o.status='active' LIMIT 100`);
+  for (const order of orders) {
+    try {
+      const market = await getPrice(order.chain, order.token_address);
+      const current = Number(market?.priceUsd);
+      const trigger = Number(order.trigger_price_usd);
+      const hit = order.order_type === 'stop_loss' ? current <= trigger : current >= trigger;
+      if (!Number.isFinite(current) || !hit) continue;
+      const claimed = await query(`UPDATE conditional_orders SET status='executing' WHERE id=$1 AND status='active' RETURNING id`, [order.id]);
+      if (!claimed.rowCount) continue;
+      const position = await getPosition(order.session_id, order.position_id);
+      if (!position) throw new Error('Position closed');
+      await sell(order.session_id, order.position_id, { quantity: position.quantity * Number(order.percent_to_sell) / 100, marketPriceUsd: current, feePct: CONFIG.feePct, slippagePct: CONFIG.slippagePct, source: market.source });
+      await query(`UPDATE conditional_orders SET status='executed',executed_at=NOW() WHERE id=$1`, [order.id]);
+    } catch (error) {
+      await query(`UPDATE conditional_orders SET status='failed' WHERE id=$1`, [order.id]).catch(()=>{});
+      console.error('Conditional order failed:', order.id, error.message);
+    }
+  }
+}
+
 /*
  * HEALTH
  */
@@ -1311,3 +1472,4 @@ app.listen(
     );
   }
 );
+setInterval(() => processConditionalOrders().catch(error => console.error('Order worker:', error.message)), 60000).unref();
