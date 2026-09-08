@@ -188,7 +188,7 @@ function validPositiveNumber(value) {
 
 async function liveValuation(id) {
   const positions =
-    getPositions(id);
+    await getPositions(id);
 
   let positionValueUsd = 0;
   let unrealizedPnlUsd = 0;
@@ -279,7 +279,7 @@ async function liveValuation(id) {
     );
 
   const trades =
-    getTrades(id);
+    await getTrades(id);
 
   const realizedPnlUsd =
     trades.reduce(
@@ -721,7 +721,7 @@ app.get(
 
 app.get(
   '/api/position/:id',
-  (req, res) => {
+  async (req, res) => {
     try {
       const id =
         sessionId(req);
@@ -774,12 +774,12 @@ app.get(
 
 app.get(
   '/api/trades',
-  (req, res) => {
+  async (req, res) => {
     try {
       res.json({
         ok: true,
         trades:
-          getTrades(
+          await getTrades(
             sessionId(req)
           )
       });
@@ -795,12 +795,12 @@ app.get(
 
 app.get(
   '/api/balance-history',
-  (req, res) => {
+  async (req, res) => {
     try {
       res.json({
         ok: true,
         history:
-          getBalanceHistory(
+          await getBalanceHistory(
             sessionId(req)
           )
       });
