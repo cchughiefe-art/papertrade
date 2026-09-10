@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 30000;
-const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
+const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5, lowLiquidityUsd: 10000, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
 let toastTimer;
 let modalAction = null;
 let sessionId = localStorage.getItem('pt_session');
@@ -117,7 +117,9 @@ async function loadConfig() {
     const { config = {} } = await api('/api/config');
     if (number(config.feePct) !== null) state.feePct = Number(config.feePct);
     if (number(config.slippagePct) !== null) state.slippagePct = Number(config.slippagePct);
+    if (number(config.lowLiquidityUsd) !== null) state.lowLiquidityUsd = Number(config.lowLiquidityUsd);
     $('feeNote').textContent = `${state.feePct}% fee and ${state.slippagePct}% simulated slippage. Final execution uses a fresh live price.`;
+    if (config.supportUrl) { const link=$('supportLink'); link.href=config.supportUrl; link.textContent=config.supportLabel || 'Support PaperTrade'; show('supportLink'); }
   } catch (_) {}
 }
 
@@ -144,9 +146,6 @@ function selectToken(token) {
   $('tChain').textContent = chainName(token.chain);
   $('tDex').textContent = token.dex || token.source || 'Live market';
   updateTokenDisplay(token);
-  const risks = Array.isArray(token.riskWarnings) ? token.riskWarnings : [];
-  $('riskWarnings').innerHTML = risks.map(item => `<div>⚠ ${item.message}</div>`).join('');
-  $('riskWarnings').classList.toggle('hidden', !risks.length);
   $('tAddr').textContent = token.address || '—';
   $('amountInput').value = '';
   message('buyError', '');
@@ -164,6 +163,20 @@ function updateTokenDisplay(token) {
   $('tVol').textContent = compact(token.volume24hUsd);
   $('tUpdated').textContent = relativeTime(token.updatedAt);
   if (token.stale || token.priceAvailable === false) show('tStale'); else hide('tStale');
+  const risks = currentRisks(token);
+  $('riskWarnings').replaceChildren(...risks.map(text => { const div=document.createElement('div'); div.textContent=`Warning: ${text}`; return div; }));
+  $('riskWarnings').classList.toggle('hidden', !risks.length);
+}
+
+function currentRisks(token) {
+  if (token?.chain === 'robinhood' || token?.assetType === 'stock_token') return token.tradingHalted ? ['Trading is currently halted for this Stock Token.'] : [];
+  const risks=[]; const liquidity=number(token?.liquidityUsd); const change=Math.abs(number(token?.priceChange24h) || 0);
+  if (liquidity === null || liquidity <= 0) risks.push('Liquidity data is unavailable.');
+  else if (liquidity < state.lowLiquidityUsd) risks.push(`Liquidity is below ${money(state.lowLiquidityUsd, 0)}.`);
+  if (number(token?.marketCapUsd) === null || Number(token.marketCapUsd) <= 0) risks.push('Market-cap data is unavailable.');
+  if (change >= 50) risks.push(`Price moved ${change.toFixed(1)}% in 24 hours.`);
+  if (token?.stale || token?.priceAvailable === false) risks.push('The current price is unavailable or stale.');
+  return risks;
 }
 
 function renderResults(tokens) {
@@ -317,11 +330,16 @@ function bindEvents() {
   document.querySelectorAll('[data-amount]').forEach((button) => button.addEventListener('click', () => { $('amountInput').value = button.dataset.amount; message('buyError', ''); }));
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
   $('newPortfolioBtn').addEventListener('click', createPortfolio);
-  $('portfolioSelect').addEventListener('change', async event => { state.portfolio=event.target.value; localStorage.setItem('pt_portfolio',state.portfolio); await refreshV2(); await refreshAll(); });
+  $('deletePortfolioBtn').addEventListener('click', deletePortfolio);
+  $('portfolioSelect').addEventListener('change', async event => { state.portfolio=event.target.value; localStorage.setItem('pt_portfolio',state.portfolio); updatePortfolioControls(); await refreshV2(); await refreshAll(); });
   $('authBtn').addEventListener('click', authDialog);
   $('refreshTrending').addEventListener('click', loadTrending);
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.tab)));
+  window.addEventListener('online', updateConnectionStatus); window.addEventListener('offline', updateConnectionStatus);
 }
+
+function updateConnectionStatus(){const online=navigator.onLine!==false;$('connectionBanner').classList.toggle('hidden',online);$('marketStatus').classList.toggle('offline',!online);}
+function updatePortfolioControls(){ $('deletePortfolioBtn').classList.toggle('hidden', state.portfolio === 'default'); }
 
 function selectTab(tab) {
   document.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
@@ -329,11 +347,12 @@ function selectTab(tab) {
   if (!/jsdom/i.test(navigator.userAgent)) window.scrollTo?.({ top: 0, behavior: 'smooth' });
 }
 
-async function loadPortfolios(){try{const {portfolios=[]}=await api('/api/portfolios');const select=$('portfolioSelect');select.replaceChildren();portfolios.forEach(p=>{const o=document.createElement('option');o.value=p.key;o.textContent=p.name;o.selected=p.key===state.portfolio;select.appendChild(o);});}catch(_) {}}
+async function loadPortfolios(){try{const {portfolios=[]}=await api('/api/portfolios');if(!portfolios.some(p=>p.key===state.portfolio))state.portfolio='default';const select=$('portfolioSelect');select.replaceChildren();portfolios.forEach(p=>{const o=document.createElement('option');o.value=p.key;o.textContent=p.name;o.selected=p.key===state.portfolio;select.appendChild(o);});localStorage.setItem('pt_portfolio',state.portfolio);updatePortfolioControls();}catch(_) {}}
 function createPortfolio(){openModal('New portfolio','<label class="form-label">Portfolio name</label><input id="portfolioName" class="modal-input" maxlength="40" placeholder="Memecoin strategy">',async()=>{const name=$('portfolioName').value.trim();const {portfolio}=await api('/api/portfolios',{method:'POST',body:JSON.stringify({name})});state.portfolio=portfolio.key;localStorage.setItem('pt_portfolio',state.portfolio);await loadPortfolios();await refreshAll();toast('Portfolio created.');},'Create');}
+function deletePortfolio(){if(state.portfolio==='default')return;openModal('Delete portfolio','<p class="trade-note">Delete the selected portfolio and all of its positions, trades and history? This cannot be undone.</p>',async()=>{await api(`/api/portfolios/${encodeURIComponent(state.portfolio)}`,{method:'DELETE'});state.portfolio='default';localStorage.setItem('pt_portfolio','default');await loadPortfolios();await refreshAll();toast('Portfolio deleted.');},'Delete portfolio');}
 function authDialog(){
   if (state.accessToken) return openModal('Your account','<p class="trade-note">You are signed in. Your portfolios are linked to this account.</p>',async()=>{clearSession();state.portfolio='default';localStorage.setItem('pt_portfolio','default');await loadPortfolios();await refreshAll();toast('Signed out.');},'Sign out');
-  openModal('Sign in','<div class="auth-tabs"><button id="loginMode" class="active" type="button">Sign in</button><button id="signupMode" type="button">Create account</button></div><label class="form-label">Email</label><input id="authEmail" class="modal-input" type="email" autocomplete="email"><label class="form-label auth-password-label">Password</label><input id="authPassword" class="modal-input" type="password" minlength="8" autocomplete="current-password"><p id="authHelp" class="trade-note">Use the email and password you registered with.</p>',async()=>{
+  openModal('Sign in','<div class="auth-tabs"><button id="loginMode" class="active" type="button">Sign in</button><button id="signupMode" type="button">Create account</button></div><label class="form-label">Email</label><input id="authEmail" class="modal-input" type="email" autocomplete="email"><label class="form-label auth-password-label">Password</label><input id="authPassword" class="modal-input" type="password" minlength="8" autocomplete="current-password"><p id="authHelp" class="trade-note">Use the email and password you registered with.</p><button id="forgotPassword" class="text-button" type="button">Forgot password?</button>',async()=>{
     const action=$('signupMode').classList.contains('active')?'signup':'login';
     const email=$('authEmail').value.trim(),password=$('authPassword').value;
     if(!email||password.length<8)throw new Error('Enter a valid email and a password of at least 8 characters.');
@@ -341,19 +360,24 @@ function authDialog(){
     if(session?.access_token){saveSession(session);await loadPortfolios();await refreshAll();toast(action==='signup'?'Account created and signed in.':'Signed in.');}
     else { state.busy=false; $('modalConfirm').disabled=false; $('modalConfirm').textContent='Sign in'; $('loginMode').click(); throw new Error('Account created. Confirm the email Supabase sent you, then sign in here.'); }
   },'Sign in');
-  setTimeout(()=>{const setMode=signup=>{const login=$('loginMode'),create=$('signupMode');login.classList.toggle('active',!signup);create.classList.toggle('active',signup);$('modalTitle').textContent=signup?'Create account':'Sign in';$('modalConfirm').textContent=signup?'Create account':'Sign in';$('authHelp').textContent=signup?'Supabase may email you a confirmation link before the first sign-in.':'Use the email and password you registered with.';$('authPassword').autocomplete=signup?'new-password':'current-password';};$('loginMode').onclick=()=>setMode(false);$('signupMode').onclick=()=>setMode(true);},0);
+  setTimeout(()=>{const setMode=signup=>{const login=$('loginMode'),create=$('signupMode');login.classList.toggle('active',!signup);create.classList.toggle('active',signup);$('modalTitle').textContent=signup?'Create account':'Sign in';$('modalConfirm').textContent=signup?'Create account':'Sign in';$('authHelp').textContent=signup?'Supabase may email you a confirmation link before the first sign-in.':'Use the email and password you registered with.';$('authPassword').autocomplete=signup?'new-password':'current-password';};$('loginMode').onclick=()=>setMode(false);$('signupMode').onclick=()=>setMode(true);$('forgotPassword').onclick=passwordRecoveryDialog;},0);
 }
+function passwordRecoveryDialog(){openModal('Reset password','<label class="form-label">Account email</label><input id="recoveryEmail" class="modal-input" type="email" autocomplete="email"><p class="trade-note">We will send a secure password-reset link to this email.</p>',async()=>{const email=$('recoveryEmail').value.trim();if(!email)throw new Error('Enter your account email.');await api('/api/auth/recover',{method:'POST',body:JSON.stringify({email})});toast('Password-reset email sent.');},'Send reset link');}
+function newPasswordDialog(){openModal('Choose a new password','<label class="form-label">New password</label><input id="newPassword" class="modal-input" type="password" minlength="8" autocomplete="new-password"><p class="trade-note">Use at least 8 characters.</p>',async()=>{const password=$('newPassword').value;if(password.length<8)throw new Error('Password must contain at least 8 characters.');await api('/api/auth/update-password',{method:'POST',body:JSON.stringify({password})});toast('Password updated.');},'Update password');}
 async function loadStats(){try{const {statistics:s}=await api('/api/statistics');$('statistics').innerHTML=`<div><span>Win rate</span><strong>${Number(s.winRate).toFixed(1)}%</strong></div><div><span>Closed trades</span><strong>${s.closedTrades}</strong></div><div><span>Total P&amp;L</span><strong class="${tone(s.totalPnlUsd)}">${signedMoney(s.totalPnlUsd)}</strong></div><div><span>Total fees</span><strong>${money(s.totalFeesUsd)}</strong></div>`;}catch(_) {}}
 async function loadHistory(){try{const {history=[]}=await api('/api/equity-history');const svg=$('equityChart');if(history.length<2){svg.innerHTML='<text x="300" y="80" text-anchor="middle" fill="#647084" font-size="14">History appears as your portfolio updates</text>';return;}const values=history.map(x=>Number(x.equityUsd));const min=Math.min(...values),max=Math.max(...values),range=max-min||1;const pts=values.map((v,i)=>`${i/(values.length-1)*600},${150-(v-min)/range*135}`).join(' ');svg.innerHTML=`<polyline class="chart-line" points="${pts}"/>`;}catch(_) {}}
 async function loadTrending(){try{const {tokens=[]}=await api('/api/trending');const list=$('trendingList');list.replaceChildren();tokens.forEach(t=>{const b=document.createElement('button');b.className='result-item';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);list.appendChild(b);});}catch(error){toast(error.message,true);}}
 async function addWatch(){await api('/api/watchlist',{method:'POST',body:JSON.stringify(state.token)});toast('Added to watchlist.');}
-async function loadWatchlist(){try{const {tokens=[]}=await api('/api/watchlist');const list=$('watchlistList');list.replaceChildren();if(!tokens.length){list.innerHTML=emptyState('☆','Watchlist empty','Save tokens to follow them without buying.');return;}tokens.forEach(t=>{const b=document.createElement('button');b.className='result-item';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);list.appendChild(b);});}catch(_) {}}
+async function loadWatchlist(){try{const {tokens=[]}=await api('/api/watchlist');const list=$('watchlistList');list.replaceChildren();if(!tokens.length){list.innerHTML=emptyState('☆','Watchlist empty','Save tokens to follow them without buying.');return;}tokens.forEach(t=>{const row=document.createElement('div');row.className='result-item watch-row';const b=document.createElement('button');b.type='button';b.className='watch-open';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);const remove=document.createElement('button');remove.type='button';remove.className='watch-remove';remove.textContent='Remove';remove.onclick=async()=>{await api(`/api/watchlist/${t.id}`,{method:'DELETE'});await loadWatchlist();toast('Removed from watchlist.');};row.append(b,remove);list.appendChild(row);});}catch(_) {}}
 async function loadBalanceHistory(){try{const {history=[]}=await api('/api/balance-history');const list=$('balanceHistory');list.innerHTML=history.length?history.slice(0,20).map(t=>`<div class="trade-item row-between"><span><strong>${t.type==='deposit'?'Deposit':'Withdrawal'}</strong><small class="updated"> ${dateTime(t.createdAt)}</small></span><strong class="${t.type==='deposit'?'positive':'negative'}">${t.type==='deposit'?'+':'-'}${money(t.amountUsd)}</strong></div>`).join(''):emptyState('↕','No cash activity','Deposits and withdrawals appear here.');}catch(_) {}}
 function setExit(position){openModal(`Set exits for ${position.symbol}`,'<label class="form-label">Stop-loss price (optional)</label><input id="stopPrice" class="modal-input" type="number" step="any"><label class="form-label" style="margin-top:12px">Take-profit price (optional)</label><input id="takePrice" class="modal-input" type="number" step="any">',async()=>{const stop=Number($('stopPrice').value),take=Number($('takePrice').value);if(!(stop>0)&&!(take>0))throw new Error('Enter at least one trigger price.');if(stop>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'stop_loss',triggerPriceUsd:stop,percentToSell:100})});if(take>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'take_profit',triggerPriceUsd:take,percentToSell:100})});toast('Exit orders saved.');},'Save exits');}
 async function refreshV2(){await Promise.allSettled([loadPortfolios(),loadStats(),loadHistory(),loadWatchlist(),loadBalanceHistory()]);}
 
 async function init() {
   bindEvents();
+  updateConnectionStatus();
+  const hash=new URLSearchParams(location.hash.replace(/^#/,''));
+  if(hash.get('type')==='recovery'&&hash.get('access_token')){saveSession({access_token:hash.get('access_token'),refresh_token:hash.get('refresh_token'),expires_in:Number(hash.get('expires_in')||3600)});history.replaceState(null,'',location.pathname+location.search);setTimeout(newPasswordDialog,0);}
   if (state.accessToken) $('authBtn').textContent = 'Account';
   await loadConfig();
   await refreshAll();

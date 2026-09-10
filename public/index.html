@@ -14,7 +14,8 @@
       <a class="brand" href="#" aria-label="PaperTrade home"><span class="brand-mark">P</span><span>Paper<span>Trade</span></span></a>
       <div class="market-status" id="marketStatus"><span class="status-dot"></span><span>Market live</span></div>
     </header>
-    <section class="v2bar card"><select id="portfolioSelect" aria-label="Portfolio"><option value="default">Main portfolio</option></select><button id="newPortfolioBtn" class="button button-secondary" type="button">New portfolio</button><button id="authBtn" class="button button-secondary" type="button">Sign in</button><a class="button button-secondary" href="/api/trades.csv" id="exportBtn">Export CSV</a></section>
+    <div id="connectionBanner" class="connection-banner hidden" role="status">You are offline. Showing the most recently loaded information.</div>
+    <section class="v2bar card"><select id="portfolioSelect" aria-label="Portfolio"><option value="default">Main portfolio</option></select><button id="newPortfolioBtn" class="button button-secondary" type="button">New portfolio</button><button id="deletePortfolioBtn" class="icon-button danger hidden" type="button" title="Delete portfolio" aria-label="Delete selected portfolio">×</button><button id="authBtn" class="button button-secondary" type="button">Sign in</button><a class="button button-secondary" href="/api/trades.csv" id="exportBtn">Export CSV</a></section>
     <nav class="app-tabs" aria-label="Main navigation"><button class="active" data-tab="trade" type="button">Trade</button><button data-tab="portfolio" type="button">Portfolio</button><button data-tab="discover" type="button">Discover</button><button data-tab="activity" type="button">Activity</button></nav>
     <main>
       <section class="hero card">
@@ -51,7 +52,7 @@
         <section class="card list-card hidden" data-view="activity"><div class="section-heading"><div><span class="eyebrow">Activity</span><h2>Trade history</h2></div></div><div id="tradesList"><div class="empty-state"><span>↕</span><strong>No trades yet</strong><p>Your buys and sells will appear here.</p></div></div></section>
       </div>
     </main>
-    <footer><span>Simulation only</span><span>Live prices, no real funds</span><span>No wallet connection</span></footer>
+    <footer><span>Simulation only</span><span>Live prices, no real funds</span><span>No wallet connection</span><a id="supportLink" class="hidden" target="_blank" rel="noopener noreferrer">Support PaperTrade</a></footer>
   </div>
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-backdrop" data-close-modal aria-label="Close dialog"></button><div class="modal-panel"><div class="modal-head"><div><span class="eyebrow">PaperTrade</span><h2 id="modalTitle">Confirm action</h2></div><button class="icon-button" data-close-modal type="button" aria-label="Close">×</button></div><div id="modalBody"></div><div id="modalError" class="message error hidden" role="alert"></div><div class="modal-actions"><button id="modalCancel" class="button button-secondary" type="button">Cancel</button><button id="modalConfirm" class="button button-primary" type="button">Confirm</button></div></div></div>
   <div id="toast" class="toast hidden" role="status"></div>

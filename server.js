@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 
 const {
   resolveToken,
@@ -26,7 +27,7 @@ const {
   getBalanceHistory,
   reset
 } = require('./src/trading/engine');
-const { initDb, getDatabaseStatus, recordEquity, getEquityHistory } = require('./src/database/db');
+const { initDb, getDatabaseStatus, recordEquity, getEquityHistory, pool } = require('./src/database/db');
 
 const app = express();
 const { query, many, one } = require('./src/database/db');
@@ -34,21 +35,65 @@ const { query, many, one } = require('./src/database/db');
 const PORT =
   Number(process.env.PORT) || 10000;
 
+app.set('trust proxy', 1);
+
 app.use(
   express.json({
     limit: '100kb'
   })
 );
 
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
+  });
+  next();
+});
+
+const requestBuckets = new Map();
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health' || req.path === '/readiness') return next();
+  const now = Date.now();
+  const authRequest = req.path.startsWith('/auth/');
+  const windowMs = authRequest ? 10 * 60 * 1000 : 60 * 1000;
+  const limit = authRequest ? 20 : 180;
+  const key = `${req.ip}:${authRequest ? 'auth' : 'api'}`;
+  let bucket = requestBuckets.get(key);
+  if (!bucket || now >= bucket.resetAt) bucket = { count: 0, resetAt: now + windowMs };
+  bucket.count += 1;
+  requestBuckets.set(key, bucket);
+  res.set('RateLimit-Limit', String(limit));
+  res.set('RateLimit-Remaining', String(Math.max(0, limit - bucket.count)));
+  res.set('RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
+  if (bucket.count > limit) return res.status(429).json({ ok: false, error: 'Too many requests. Wait briefly and try again.' });
+  next();
+});
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of requestBuckets) if (now >= bucket.resetAt) requestBuckets.delete(key);
+}, 10 * 60 * 1000).unref();
+
+const authCache = new Map();
 app.use(async (req, res, next) => {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   req.paperOwner = null;
   if (bearer && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+    const cacheKey = crypto.createHash('sha256').update(bearer).digest('hex');
+    const cached = authCache.get(cacheKey);
+    if (cached && Date.now() < cached.expires) { req.paperOwner = cached.owner; return next(); }
     try {
       const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, { headers: { authorization: `Bearer ${bearer}`, apikey: process.env.SUPABASE_ANON_KEY } });
-      if (response.ok) req.paperOwner = (await response.json()).id || null;
+      if (response.ok) {
+        req.paperOwner = (await response.json()).id || null;
+        if (req.paperOwner) authCache.set(cacheKey, { owner: req.paperOwner, expires: Date.now() + 30000 });
+      }
       else if (!req.path.startsWith('/api/auth/')) return res.status(401).json({ ok: false, error: 'Session expired. Please sign in again.' });
-    } catch (_) {}
+    } catch (_) {
+      if (!req.path.startsWith('/api/auth/')) return res.status(503).json({ ok: false, error: 'Sign-in service is temporarily unavailable. Please retry.' });
+    }
   }
   next();
 });
@@ -381,7 +426,9 @@ app.get(
         staleAfterSeconds:
           CONFIG.staleAfterSeconds,
         lowLiquidityUsd:
-          CONFIG.lowLiquidityUsd
+          CONFIG.lowLiquidityUsd,
+        supportUrl: /^https:\/\//i.test(process.env.SUPPORT_URL || '') ? process.env.SUPPORT_URL : null,
+        supportLabel: String(process.env.SUPPORT_LABEL || 'Support PaperTrade').slice(0, 40)
       }
     });
   }
@@ -1316,15 +1363,26 @@ app.get('/api/trades.csv', async (req, res) => {
 app.post('/api/auth/:action', async (req, res) => {
   try {
     const action = req.params.action;
-    if (!['signup', 'login', 'refresh'].includes(action) || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) throw new Error('Authentication is not configured');
-    const endpoint = action === 'signup' ? '/auth/v1/signup' : `/auth/v1/token?grant_type=${action === 'refresh' ? 'refresh_token' : 'password'}`;
-    const body = action === 'refresh'
-      ? { refresh_token: req.body?.refreshToken }
-      : { email: String(req.body?.email || '').trim(), password: req.body?.password };
-    const response = await fetch(`${process.env.SUPABASE_URL}${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: process.env.SUPABASE_ANON_KEY }, body: JSON.stringify(body) });
+    if (!['signup', 'login', 'refresh', 'recover', 'update-password'].includes(action) || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) throw new Error('Authentication is not configured');
+    let endpoint; let method = 'POST'; let body;
+    if (action === 'signup') { endpoint = '/auth/v1/signup'; body = { email: String(req.body?.email || '').trim(), password: req.body?.password }; }
+    else if (action === 'login') { endpoint = '/auth/v1/token?grant_type=password'; body = { email: String(req.body?.email || '').trim(), password: req.body?.password }; }
+    else if (action === 'refresh') { endpoint = '/auth/v1/token?grant_type=refresh_token'; body = { refresh_token: req.body?.refreshToken }; }
+    else if (action === 'recover') {
+      endpoint = '/auth/v1/recover'; body = { email: String(req.body?.email || '').trim() };
+      const origin = String(req.headers.origin || '');
+      if (/^https?:\/\//i.test(origin)) endpoint += `?redirect_to=${encodeURIComponent(origin)}`;
+    } else {
+      endpoint = '/auth/v1/user'; method = 'PUT'; body = { password: req.body?.password };
+      if (!req.paperOwner) return res.status(401).json({ ok: false, error: 'A valid recovery session is required' });
+    }
+    const headers = { 'content-type': 'application/json', apikey: process.env.SUPABASE_ANON_KEY };
+    const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (bearer) headers.authorization = `Bearer ${bearer}`;
+    const response = await fetch(`${process.env.SUPABASE_URL}${endpoint}`, { method, headers, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return res.status(response.status).json({ ok: false, error: data.msg || data.message || data.error_description || 'Authentication failed' });
-    res.json({ ok: true, session: data });
+    res.json({ ok: true, session: data, message: action === 'recover' ? 'Password recovery email sent' : undefined });
   } catch (error) { errorResponse(res, error); }
 });
 
@@ -1344,6 +1402,34 @@ app.post('/api/portfolios', async (req, res) => {
     await query(`INSERT INTO portfolios(owner_id,portfolio_key,name) VALUES($1,$2,$3)`, [owner,key,name]);
     res.json({ ok: true, portfolio: { key, name } });
   } catch (error) { errorResponse(res, error); }
+});
+
+app.delete('/api/portfolios/:key', async (req, res) => {
+  let client;
+  try {
+    await initDb();
+    client = await pool.connect();
+    const owner = ownerId(req);
+    const key = String(req.params.key || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    if (!key || key === 'default') throw new Error('The main portfolio cannot be deleted');
+    const found = await client.query(`SELECT 1 FROM portfolios WHERE owner_id=$1 AND portfolio_key=$2`, [owner, key]);
+    if (!found.rowCount) throw new Error('Portfolio not found');
+    const id = `${owner}::${key}`;
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM conditional_orders WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM watchlist WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM equity_history WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM balance_transactions WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM trades WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM positions WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM wallets WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM portfolios WHERE owner_id=$1 AND portfolio_key=$2`, [owner, key]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    errorResponse(res, error);
+  } finally { client?.release(); }
 });
 
 app.get('/api/watchlist', async (req, res) => {

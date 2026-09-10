@@ -41,6 +41,10 @@ Open `http://localhost:10000` unless `PORT` is set.
 | `PAPERTRADE_FEE_PCT` | No | `0.25` | Simulated trade fee percentage |
 | `PAPERTRADE_SLIPPAGE_PCT` | No | `0.50` | Simulated slippage percentage |
 | `PAPERTRADE_STALE_AFTER_SECONDS` | No | `30` | Maximum price age for execution |
+| `SUPABASE_URL` | For accounts | None | Supabase project URL used for authentication |
+| `SUPABASE_ANON_KEY` | For accounts | None | Supabase public anonymous key |
+| `SUPPORT_URL` | No | Hidden | Secure payment, donation, or sponsorship page |
+| `SUPPORT_LABEL` | No | `Support PaperTrade` | Text shown for the optional support link |
 
 ## Verification
 
