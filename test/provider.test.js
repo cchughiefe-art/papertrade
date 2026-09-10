@@ -42,3 +42,21 @@ test('batch prices use one request for tokens on the same chain', async () => {
     assert.match(seen[0], /BatchOne,BatchTwo$/);
   } finally { global.fetch = originalFetch; }
 });
+
+test('Robinhood Stock Token price applies the corporate-action multiplier', async () => {
+  const originalFetch = global.fetch;
+  const contract = '0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D';
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/assets')) return { ok: true, json: async () => ({ assets: [{ tokenSymbol: 'P', tokenName: 'Everpure · Robinhood Token', status: 'ASSET_STATUS_ACTIVE', currentMultiplier: '2', deployments: [{ contractAddress: contract, chainId: 4663 }] }] }) };
+    return { ok: true, json: async () => ({ quotes: [{ tokenSymbol: 'P', bid: '10', ask: '12', dailyTradingVolume: '100', generatedAt: new Date().toISOString() }] }) };
+  };
+  delete require.cache[require.resolve('../src/providers/robinhood')];
+  const robinhood = require('../src/providers/robinhood');
+  try {
+    const token = await robinhood.resolveToken(contract);
+    assert.equal(token.chain, 'robinhood');
+    assert.equal(token.priceUsd, 22);
+    assert.equal(token.address, contract);
+    assert.equal(token.assetType, 'stock_token');
+  } finally { global.fetch = originalFetch; }
+});

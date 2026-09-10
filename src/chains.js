@@ -66,6 +66,16 @@ const CHAINS = {
     addressType: 'evm',
     explorer: a => `https://snowtrace.io/token/${a}`,
     providers: { dexscreener: 'avalanche', gecko: 'avax' }
+  },
+
+  robinhood: {
+    id: 'robinhood',
+    name: 'Robinhood Chain',
+    native: 'ETH',
+    chainId: 4663,
+    addressType: 'evm',
+    explorer: a => `https://robinhoodchain.blockscout.com/token/${a}`,
+    providers: { robinhood: 'robinhood' }
   }
 };
 
@@ -78,7 +88,8 @@ function isValidAddress(address) {
   if (EVM_RE.test(address)) {
     return Object.values(CHAINS)
       .filter(c => c.addressType === 'evm')
-      .map(c => c.id);
+      .map(c => c.id)
+      .sort((a, b) => Number(b === 'robinhood') - Number(a === 'robinhood'));
   }
 
   if (SOL_RE.test(address)) {

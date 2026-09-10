@@ -16,7 +16,8 @@ test('primary UI actions call their matching APIs', async () => {
   const { window } = dom;
   window.HTMLElement.prototype.scrollIntoView = () => {};
   window.crypto.randomUUID = () => 'test-session';
-  window.navigator.clipboard = { writeText: async () => {} };
+  let copied = '';
+  window.navigator.clipboard = { writeText: async value => { copied = value; } };
   const calls = [];
   let hasPosition = false;
   const token = { chain: 'solana', address: 'So11111111111111111111111111111111111111112', name: 'Wrapped SOL', symbol: 'SOL', priceUsd: 150, marketCapUsd: 1e9, liquidityUsd: 2e6, volume24hUsd: 1e6, priceChange24h: 2, updatedAt: Date.now() };
@@ -51,6 +52,9 @@ test('primary UI actions call their matching APIs', async () => {
   window.document.querySelector('[data-tab="portfolio"]').click();
   assert.equal(window.document.querySelector('[data-view="portfolio"]').classList.contains('hidden'), false);
   assert.match(window.document.getElementById('positionsList').textContent, /Market cap/);
+  window.document.querySelector('.copy-position').click();
+  await tick();
+  assert.equal(copied, token.address);
 
   window.document.querySelector('.sell-button').click();
   window.document.getElementById('modalConfirm').click();

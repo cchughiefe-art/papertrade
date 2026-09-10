@@ -1,5 +1,6 @@
 const dexscreener = require('./dexscreener');
 const gecko = require('./geckoterminal');
+const robinhood = require('./robinhood');
 
 const cache = new Map();
 const inFlight = new Map();
@@ -43,6 +44,14 @@ async function resolveToken(chain, address) {
     throw new Error('Token address required');
   }
 
+  if (!cleanChain || cleanChain === 'robinhood') {
+    try {
+      const token = await robinhood.resolveToken(cleanAddress);
+      if (token) return token;
+    } catch (_) {}
+    if (cleanChain === 'robinhood') throw new Error('Robinhood Stock Token not found');
+  }
+
   const providers = [
     async () => {
       try {
@@ -83,9 +92,13 @@ async function getPrice(chain, address) {
   if (inFlight.has(k)) return inFlight.get(k);
   const request = (async () => {
     let result = null;
-    try { result = await dexscreener.getPrice(address, chain); } catch (_) {}
+    if (String(chain).toLowerCase() === 'robinhood') {
+      try { result = await robinhood.getPrice(address); } catch (_) {}
+    } else {
+      try { result = await dexscreener.getPrice(address, chain); } catch (_) {}
+    }
 
-    if (!isUsablePrice(result)) {
+    if (!isUsablePrice(result) && String(chain).toLowerCase() !== 'robinhood') {
       try { result = await gecko.getPrice(address, chain); } catch (_) {}
     }
 
@@ -107,11 +120,14 @@ async function getPrices(tokens) {
     else missing.push({ ...token, index });
   });
   if (missing.length) {
-    let bulk = [];
-    try { bulk = await dexscreener.getPrices(missing); } catch (_) {}
+    const robinhoodItems = missing.filter(token => String(token.chain).toLowerCase() === 'robinhood');
+    const dexItems = missing.filter(token => String(token.chain).toLowerCase() !== 'robinhood');
+    const bulkByIndex = new Map();
+    if (dexItems.length) try { (await dexscreener.getPrices(dexItems)).forEach((value, i) => bulkByIndex.set(dexItems[i].index, value)); } catch (_) {}
+    if (robinhoodItems.length) try { (await robinhood.getPrices(robinhoodItems)).forEach((value, i) => bulkByIndex.set(robinhoodItems[i].index, value)); } catch (_) {}
     await Promise.all(missing.map(async (token, i) => {
-      let result = bulk[i];
-      if (!isUsablePrice(result)) {
+      let result = bulkByIndex.get(token.index);
+      if (!isUsablePrice(result) && String(token.chain).toLowerCase() !== 'robinhood') {
         try { result = await gecko.getPrice(token.address, token.chain); } catch (_) {}
       }
       if (isUsablePrice(result)) setCached(key(token.chain, token.address), result, PRICE_TTL);
@@ -137,7 +153,15 @@ async function searchTokens(query) {
   let providerError = null;
 
   try {
-    results = await dexscreener.searchTokens(clean);
+    const [dexResults, robinhoodResults] = await Promise.allSettled([
+      dexscreener.searchTokens(clean),
+      robinhood.searchTokens(clean)
+    ]);
+    results = [
+      ...(robinhoodResults.status === 'fulfilled' ? robinhoodResults.value : []),
+      ...(dexResults.status === 'fulfilled' ? dexResults.value : [])
+    ];
+    if (dexResults.status === 'rejected' && robinhoodResults.status === 'rejected') providerError = dexResults.reason;
   } catch (error) {
     providerError = error;
   }

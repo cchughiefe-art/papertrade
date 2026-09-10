@@ -182,6 +182,7 @@ function decoratePrice(price) {
 function requireFreshPrice(price) {
   if (
     !price ||
+    price.priceAvailable === false ||
     !validPositiveNumber(price.priceUsd)
   ) {
     throw new Error(
@@ -351,6 +352,10 @@ async function walletResponse(id) {
 
 function riskWarnings(token) {
   const warnings = [];
+  if (token?.assetType === 'stock_token' || token?.chain === 'robinhood') {
+    if (token?.tradingHalted) warnings.push({ level: 'high', code: 'TRADING_HALTED', message: 'Trading is currently halted for this Stock Token.' });
+    return warnings;
+  }
   const liquidity = Number(token?.liquidityUsd || 0);
   const change = Math.abs(Number(token?.priceChange24h || 0));
   if (!liquidity) warnings.push({ level: 'high', code: 'NO_LIQUIDITY', message: 'Liquidity data is unavailable.' });

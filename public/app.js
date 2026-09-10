@@ -58,7 +58,7 @@ function quantity(value) { const n = number(value); return n === null ? '—' : 
 function percent(value) { const n = number(value); return n === null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`; }
 function signedMoney(value) { const n = number(value); return n === null ? '—' : `${n >= 0 ? '+' : '-'}${money(Math.abs(n))}`; }
 function tone(value) { const n = number(value); return n === null || n === 0 ? '' : n > 0 ? 'positive' : 'negative'; }
-function chainName(chain) { return ({ solana: 'Solana', ethereum: 'Ethereum', base: 'Base', bsc: 'BNB Chain', arbitrum: 'Arbitrum', polygon: 'Polygon', avalanche: 'Avalanche' })[chain] || chain || 'Unknown'; }
+function chainName(chain) { return ({ solana: 'Solana', ethereum: 'Ethereum', base: 'Base', bsc: 'BNB Chain', arbitrum: 'Arbitrum', polygon: 'Polygon', avalanche: 'Avalanche', robinhood: 'Robinhood Chain' })[chain] || chain || 'Unknown'; }
 function relativeTime(value) { const ms = typeof value === 'number' ? value : Date.parse(value); if (!Number.isFinite(ms)) return '—'; const seconds = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
 function dateTime(value) { const ms = Date.parse(value); return Number.isFinite(ms) ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'; }
 function show(id) { $(id)?.classList.remove('hidden'); }
@@ -222,10 +222,11 @@ async function refreshPositions() {
   positions.forEach((position) => {
     const row = document.createElement('article'); row.className = 'position';
     const unavailable = number(position.currentPriceUsd) === null;
-    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid position-market"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div><div><span>Market cap</span><strong>${compact(position.marketCapUsd)}</strong></div><div><span>Liquidity</span><strong>${compact(position.liquidityUsd)}</strong></div><div><span>24h volume</span><strong>${compact(position.volume24hUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
+    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid position-market"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div><div><span>Market cap</span><strong>${compact(position.marketCapUsd)}</strong></div><div><span>Liquidity</span><strong>${compact(position.liquidityUsd)}</strong></div><div><span>24h volume</span><strong>${compact(position.volume24hUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button copy-position" type="button">Copy CA</button><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
     row.querySelector('.asset-name strong').textContent = position.symbol || position.tokenName || 'TOKEN';
     row.querySelector('.asset-name span').textContent = `${chainName(position.chain)} · ${quantity(position.quantity)} tokens`;
     row.querySelector('.sell-button').addEventListener('click', () => reviewSell(position)); list.appendChild(row);
+    row.querySelector('.copy-position').addEventListener('click', () => copyText(position.tokenAddress, 'Contract address copied.'));
     row.querySelector('.exits').addEventListener('click', () => setExit(position));
   });
 }
@@ -296,7 +297,11 @@ function reviewReset() {
 
 async function copyAddress() {
   if (!state.token?.address) return;
-  try { await navigator.clipboard.writeText(state.token.address); toast('Contract address copied.'); }
+  return copyText(state.token.address, 'Contract address copied.');
+}
+
+async function copyText(value, successMessage) {
+  try { await navigator.clipboard.writeText(value); toast(successMessage); }
   catch (_) { toast('Copy failed. Press and hold the contract address.', true); }
 }
 
