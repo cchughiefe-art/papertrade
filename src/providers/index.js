@@ -1,9 +1,11 @@
 const dexscreener = require('./dexscreener');
 const gecko = require('./geckoterminal');
 const robinhood = require('./robinhood');
+const paprika = require('./dexpaprika');
 
 const cache = new Map();
-const inFlight = new Map();
+const pendingPrices = new Map();
+let pendingTimer = null;
 
 const PRICE_TTL = 15000;
 const STALE_TTL = 120000;
@@ -17,12 +19,14 @@ function key(chain, address) {
 function getCached(k) {
   const item = cache.get(k);
   if (!item) return null;
-  if (Date.now() > item.expires) {
+  if (Date.now() > item.staleUntil) {
     cache.delete(k);
     return null;
   }
-  return item.value;
+  return Date.now() <= item.expires ? item.value : null;
 }
+
+function getStale(k) { const item = cache.get(k); return item && Date.now() <= item.staleUntil ? item.value : null; }
 
 function setCached(k, value, ttl) {
   cache.set(k, { value, expires: Date.now() + ttl, staleUntil: Date.now() + STALE_TTL });
@@ -62,10 +66,13 @@ async function resolveToken(chain, address) {
     },
     async () => {
       try {
-        return await gecko.resolveToken(cleanChain, cleanAddress);
+        return await paprika.resolveToken(cleanChain, cleanAddress);
       } catch (_) {
         return null;
       }
+    },
+    async () => {
+      try { return await gecko.resolveToken(cleanChain, cleanAddress); } catch (_) { return null; }
     }
   ];
 
@@ -85,60 +92,49 @@ async function resolveToken(chain, address) {
 }
 
 async function getPrice(chain, address) {
-  const k = key(chain, address);
+  return (await getPrices([{ chain, address }]))[0] || null;
+}
+
+function queuePrice(token) {
+  const k = key(token?.chain, token?.address);
   const cached = getCached(k);
-  if (isUsablePrice(cached)) return cached;
+  if (isUsablePrice(cached)) return Promise.resolve(cached);
+  return new Promise(resolve => {
+    const entry = pendingPrices.get(k) || { token: { chain: token?.chain, address: token?.address }, waiters: [] };
+    entry.waiters.push(resolve); pendingPrices.set(k, entry);
+    if (!pendingTimer) pendingTimer = setTimeout(flushPriceQueue, 25);
+  });
+}
 
-  if (inFlight.has(k)) return inFlight.get(k);
-  const request = (async () => {
-    let result = null;
-    if (String(chain).toLowerCase() === 'robinhood') {
-      try { result = await robinhood.getPrice(address); } catch (_) {}
-    } else {
-      try { result = await dexscreener.getPrice(address, chain); } catch (_) {}
-    }
-
-    if (!isUsablePrice(result) && String(chain).toLowerCase() !== 'robinhood') {
-      try { result = await gecko.getPrice(address, chain); } catch (_) {}
-    }
-
-    if (isUsablePrice(result)) { setCached(k, result, PRICE_TTL); return result; }
-    const old = cache.get(k);
-    return old && Date.now() <= old.staleUntil ? { ...old.value, stale: true } : null;
-  })();
-  inFlight.set(k, request);
-  try { return await request; } finally { inFlight.delete(k); }
+async function flushPriceQueue() {
+  pendingTimer = null;
+  const entries = [...pendingPrices.entries()];
+  pendingPrices.clear();
+  const tokens = entries.map(([, entry]) => entry.token);
+  const values = new Array(tokens.length).fill(null);
+  const robinhoodItems = [], dexItems = [];
+  tokens.forEach((token, index) => (String(token.chain).toLowerCase() === 'robinhood' ? robinhoodItems : dexItems).push({ ...token, index }));
+  if (dexItems.length) try { (await dexscreener.getPrices(dexItems)).forEach((value, i) => { values[dexItems[i].index] = value; }); } catch (_) {}
+  if (robinhoodItems.length) try { (await robinhood.getPrices(robinhoodItems)).forEach((value, i) => { values[robinhoodItems[i].index] = value; }); } catch (_) {}
+  const paprikaItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
+  if (paprikaItems.length) try { (await paprika.getPrices(paprikaItems)).forEach((value, i) => { if (value) values[paprikaItems[i].index] = value; }); } catch (_) {}
+  const geckoItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
+  let cursor = 0;
+  async function geckoWorker() { while (cursor < geckoItems.length) { const item = geckoItems[cursor++]; try { values[item.index] = await gecko.getPrice(item.address, item.chain); } catch (_) {} } }
+  await Promise.all(Array.from({ length: Math.min(3, geckoItems.length) }, geckoWorker));
+  entries.forEach(([k, entry], index) => {
+    let value = values[index];
+    const stale = getStale(k);
+    if (isUsablePrice(value) && stale) value = { ...stale, ...value };
+    if (isUsablePrice(value)) setCached(k, value, PRICE_TTL);
+    else if (stale) value = { ...stale, stale: true };
+    else value = null;
+    entry.waiters.forEach(resolve => resolve(value));
+  });
 }
 
 async function getPrices(tokens) {
-  const input = Array.isArray(tokens) ? tokens : [];
-  const results = new Array(input.length);
-  const missing = [];
-  input.forEach((token, index) => {
-    const cached = getCached(key(token?.chain, token?.address));
-    if (isUsablePrice(cached)) results[index] = cached;
-    else missing.push({ ...token, index });
-  });
-  if (missing.length) {
-    const robinhoodItems = missing.filter(token => String(token.chain).toLowerCase() === 'robinhood');
-    const dexItems = missing.filter(token => String(token.chain).toLowerCase() !== 'robinhood');
-    const bulkByIndex = new Map();
-    if (dexItems.length) try { (await dexscreener.getPrices(dexItems)).forEach((value, i) => bulkByIndex.set(dexItems[i].index, value)); } catch (_) {}
-    if (robinhoodItems.length) try { (await robinhood.getPrices(robinhoodItems)).forEach((value, i) => bulkByIndex.set(robinhoodItems[i].index, value)); } catch (_) {}
-    await Promise.all(missing.map(async (token, i) => {
-      let result = bulkByIndex.get(token.index);
-      if (!isUsablePrice(result) && String(token.chain).toLowerCase() !== 'robinhood') {
-        try { result = await gecko.getPrice(token.address, token.chain); } catch (_) {}
-      }
-      if (isUsablePrice(result)) setCached(key(token.chain, token.address), result, PRICE_TTL);
-      else {
-        const old = cache.get(key(token.chain, token.address));
-        if (old && Date.now() <= old.staleUntil) result = { ...old.value, stale: true };
-      }
-      results[token.index] = isUsablePrice(result) ? result : null;
-    }));
-  }
-  return results;
+  return Promise.all((Array.isArray(tokens) ? tokens : []).map(queuePrice));
 }
 
 async function searchTokens(query) {

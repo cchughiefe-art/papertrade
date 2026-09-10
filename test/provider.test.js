@@ -60,3 +60,22 @@ test('Robinhood Stock Token price applies the corporate-action multiplier', asyn
     assert.equal(token.assetType, 'stock_token');
   } finally { global.fetch = originalFetch; }
 });
+
+test('DexPaprika supplies a batched fallback when DexScreener is limited', async () => {
+  const originalFetch = global.fetch;
+  const seen = [];
+  global.fetch = async url => {
+    seen.push(String(url));
+    if (String(url).includes('dexscreener')) return { ok: false, status: 429, json: async () => ({}) };
+    if (String(url).includes('dexpaprika')) return { ok: true, json: async () => [{ id: 'FallbackToken', chain: 'solana', price_usd: 4.2 }] };
+    return { ok: false, status: 429, json: async () => ({}) };
+  };
+  for (const module of ['../src/providers', '../src/providers/dexscreener', '../src/providers/dexpaprika']) delete require.cache[require.resolve(module)];
+  const provider = require('../src/providers');
+  try {
+    const [price] = await provider.getPrices([{ chain: 'solana', address: 'FallbackToken' }]);
+    assert.equal(price.priceUsd, 4.2);
+    assert.equal(price.source, 'dexpaprika');
+    assert.equal(seen.filter(url => url.includes('dexpaprika')).length, 1);
+  } finally { global.fetch = originalFetch; }
+});

@@ -10,7 +10,8 @@ PaperTrade never connects to a wallet, stores private keys, sends blockchain tra
 
 - Search by token name, symbol, EVM contract, or Solana mint
 - Ethereum, Base, BNB Chain, Arbitrum, Polygon, Avalanche, and Solana support
-- DexScreener market data with GeckoTerminal fallback
+- DexScreener market data with DexPaprika and GeckoTerminal fallbacks
+- Shared 15-second price cache and cross-user request batching to reduce upstream API usage
 - Live position valuation and USD-to-SOL portfolio conversion
 - Simulated fees and slippage
 - Full and partial position selling
