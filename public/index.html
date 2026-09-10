@@ -3,9 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#070a0f">
+  <meta name="theme-color" content="#070908">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Paper trade crypto tokens with live market prices and zero real funds.">
   <title>PaperTrade | Live Market Simulator</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +21,7 @@
       <div class="market-status" id="marketStatus"><span class="status-dot"></span><span>Market live</span></div>
     </header>
     <div id="connectionBanner" class="connection-banner hidden" role="status">You are offline. Showing the most recently loaded information.</div>
-    <section class="v2bar card"><select id="portfolioSelect" aria-label="Portfolio"><option value="default">Main portfolio</option></select><button id="newPortfolioBtn" class="button button-secondary" type="button">New portfolio</button><button id="deletePortfolioBtn" class="icon-button danger hidden" type="button" title="Delete portfolio" aria-label="Delete selected portfolio">×</button><button id="authBtn" class="button button-secondary" type="button">Sign in</button><a class="button button-secondary" href="/api/trades.csv" id="exportBtn">Export CSV</a></section>
+    <section class="v2bar card"><select id="portfolioSelect" aria-label="Portfolio"><option value="default">Main portfolio</option></select><button id="newPortfolioBtn" class="button button-secondary" type="button">New portfolio</button><button id="deletePortfolioBtn" class="icon-button danger hidden" type="button" title="Delete portfolio" aria-label="Delete selected portfolio">×</button><button id="authBtn" class="button button-secondary" type="button">Sign in</button><button id="installBtn" class="button button-secondary hidden" type="button">Install app</button><a class="button button-secondary" href="/api/trades.csv" id="exportBtn">Export CSV</a></section>
     <nav class="app-tabs" aria-label="Main navigation"><button class="active" data-tab="trade" type="button">Trade</button><button data-tab="portfolio" type="button">Portfolio</button><button data-tab="discover" type="button">Discover</button><button data-tab="activity" type="button">Activity</button></nav>
     <main>
       <section class="hero card">
@@ -29,7 +35,7 @@
         <div class="card insight"><div class="section-heading"><div><span class="eyebrow">Performance</span><h2>Portfolio history</h2></div></div><svg id="equityChart" viewBox="0 0 600 160" role="img" aria-label="Portfolio equity chart"></svg></div>
         <div class="card insight"><div class="section-heading"><div><span class="eyebrow">Results</span><h2>Statistics</h2></div></div><div id="statistics" class="metrics-mini"></div></div>
       </section>
-      <section class="card list-card hidden" data-view="discover"><div class="section-heading"><div><span class="eyebrow">Discovery</span><h2>Trending tokens</h2></div><button id="refreshTrending" class="text-button">Refresh</button></div><div id="trendingList" class="result-list"></div></section>
+      <section class="card list-card hidden" data-view="discover"><div class="section-heading"><div><span class="eyebrow">Discovery</span><h2>Trending tokens</h2></div><button id="refreshTrending" class="text-button">Refresh</button></div><div id="providerStatus" class="provider-strip" aria-label="Market data providers"></div><div id="trendingList" class="result-list"></div></section>
       <div class="content-grid">
         <section class="card list-card hidden" data-view="discover"><div class="section-heading"><div><span class="eyebrow">Saved</span><h2>Watchlist</h2></div></div><div id="watchlistList" class="result-list"></div></section>
         <section class="card list-card hidden" data-view="activity"><div class="section-heading"><div><span class="eyebrow">Cash activity</span><h2>Transactions</h2></div></div><div id="balanceHistory"></div></section>
@@ -48,7 +54,8 @@
         <div class="trade-box"><div class="trade-box-head"><div><span class="eyebrow">Paper order</span><h3>Buy <span id="buySymbol">token</span></h3></div><span id="tDex" class="hint">—</span></div><div class="quick-amounts" aria-label="Quick amounts"><button type="button" data-amount="25">$25</button><button type="button" data-amount="50">$50</button><button type="button" data-amount="100">$100</button><button type="button" data-amount="250">$250</button></div><div class="amount-row"><label><span>$</span><input id="amountInput" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Amount in USD" aria-label="Investment amount"></label><button id="buyBtn" class="button button-success" type="button">Review buy</button></div><div id="buyError" class="message error hidden" role="alert"></div><p class="trade-note" id="feeNote">Live price plus simulated fee and slippage.</p></div>
       </section>
       <div class="content-grid">
-        <section class="card list-card hidden" data-view="portfolio"><div class="section-heading"><div><span class="eyebrow">Portfolio</span><h2>Open positions</h2></div><span id="positionCount" class="count-pill">0</span></div><div id="positionsList"><div class="empty-state"><span>◎</span><strong>No open positions</strong><p>Search for a token and place your first paper trade.</p></div></div></section>
+        <section class="card list-card hidden" data-view="portfolio"><div class="section-heading"><div><span class="eyebrow">Portfolio</span><h2>Open positions</h2></div><span id="positionCount" class="count-pill">0</span></div><div class="position-tools"><input id="positionFilter" type="search" placeholder="Filter positions" aria-label="Filter positions"><select id="positionSort" aria-label="Sort positions"><option value="pnl">P&amp;L: high to low</option><option value="value">Value: high to low</option><option value="newest">Newest first</option><option value="symbol">Symbol: A–Z</option></select></div><div id="positionsList"><div class="empty-state"><span>◎</span><strong>No open positions</strong><p>Search for a token and place your first paper trade.</p></div></div></section>
+        <section class="card list-card hidden" data-view="portfolio"><div class="section-heading"><div><span class="eyebrow">Automation</span><h2>Active exit orders</h2></div><span id="orderCount" class="count-pill">0</span></div><div id="ordersList"><div class="empty-state"><span>◇</span><strong>No active orders</strong><p>Set a stop-loss or take-profit from an open position.</p></div></div></section>
         <section class="card list-card hidden" data-view="activity"><div class="section-heading"><div><span class="eyebrow">Activity</span><h2>Trade history</h2></div></div><div id="tradesList"><div class="empty-state"><span>↕</span><strong>No trades yet</strong><p>Your buys and sells will appear here.</p></div></div></section>
       </div>
     </main>

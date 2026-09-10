@@ -8,7 +8,8 @@ const {
   getPrices,
   getSolPrice,
   searchTokens,
-  getTrending
+  getTrending,
+  getProviderStatus
 } = require('./src/providers');
 
 const {
@@ -1453,7 +1454,7 @@ app.delete('/api/watchlist/:id', async (req, res) => {
 });
 
 app.get('/api/orders', async (req,res) => {
-  try { await initDb(); res.json({ok:true,orders:await many(`SELECT id,position_id AS "positionId",order_type AS "type",trigger_price_usd AS "triggerPriceUsd",percent_to_sell AS "percentToSell",status,created_at AS "createdAt" FROM conditional_orders WHERE session_id=$1 ORDER BY id DESC`,[sessionId(req)])}); } catch(error){errorResponse(res,error);}
+  try { await initDb(); res.json({ok:true,orders:await many(`SELECT o.id,o.position_id AS "positionId",o.order_type AS "type",o.trigger_price_usd AS "triggerPriceUsd",o.percent_to_sell AS "percentToSell",o.status,o.created_at AS "createdAt",p.symbol,p.token_name AS "tokenName",p.chain,p.token_address AS "tokenAddress" FROM conditional_orders o JOIN positions p ON p.id=o.position_id AND p.session_id=o.session_id WHERE o.session_id=$1 AND o.status='active' ORDER BY o.id DESC`,[sessionId(req)])}); } catch(error){errorResponse(res,error);}
 });
 
 app.post('/api/orders', async (req,res) => {
@@ -1463,6 +1464,8 @@ app.post('/api/orders', async (req,res) => {
 app.delete('/api/orders/:id', async(req,res)=>{try{await initDb();await query(`UPDATE conditional_orders SET status='cancelled' WHERE id=$1 AND session_id=$2`,[Number(req.params.id),sessionId(req)]);res.json({ok:true});}catch(error){errorResponse(res,error);}});
 
 app.get('/api/trending', async(req,res)=>{try{const tokens=await getTrending();res.json({ok:true,tokens:tokens.map(token=>({...token,riskWarnings:riskWarnings(token)}))});}catch(error){errorResponse(res,error);}});
+
+app.get('/api/providers/status', (req,res)=>{res.json({ok:true,...getProviderStatus()});});
 
 async function processConditionalOrders() {
   if (!getDatabaseStatus().configured) return;

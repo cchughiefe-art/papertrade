@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 30000;
-const state = { token: null, positions: [], busy: false, feePct: 0.25, slippagePct: 0.5, lowLiquidityUsd: 10000, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
+const state = { token: null, positions: [], wallet: {}, installPrompt: null, busy: false, feePct: 0.25, slippagePct: 0.5, lowLiquidityUsd: 10000, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
 let toastTimer;
 let modalAction = null;
 let sessionId = localStorage.getItem('pt_session');
@@ -125,6 +125,7 @@ async function loadConfig() {
 
 async function refreshWallet() {
   const { wallet = {} } = await api('/api/wallet');
+  state.wallet = wallet;
   $('wCash').textContent = money(wallet.cashUsd);
   $('wPositions').textContent = money(wallet.positionValueUsd);
   $('wEquity').textContent = money(wallet.equityUsd);
@@ -132,6 +133,7 @@ async function refreshWallet() {
   setPnl('wUnrealized', wallet.unrealizedPnlUsd);
   $('solValue').textContent = number(wallet.equitySol) === null ? 'SOL price unavailable' : `${Number(wallet.equitySol).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })} SOL · 1 SOL = ${price(wallet.solPriceUsd)}`;
   $('lastSync').textContent = 'Updated just now';
+  if (state.positions.length) renderPositions();
 }
 
 function selectToken(token) {
@@ -229,19 +231,57 @@ async function refreshPositions() {
   const { positions = [] } = await api('/api/positions');
   state.positions = positions;
   $('positionCount').textContent = String(positions.length);
+  renderPositions();
+}
+
+function renderPositions() {
+  const query = String($('positionFilter')?.value || '').trim().toLowerCase();
+  const sort = $('positionSort')?.value || 'pnl';
+  const positions = state.positions.filter(position => !query || `${position.symbol || ''} ${position.tokenName || ''} ${position.tokenAddress || ''}`.toLowerCase().includes(query));
+  positions.sort((a, b) => {
+    if (sort === 'value') return Number(b.currentValueUsd || 0) - Number(a.currentValueUsd || 0);
+    if (sort === 'newest') return Number(b.id || 0) - Number(a.id || 0);
+    if (sort === 'symbol') return String(a.symbol || '').localeCompare(String(b.symbol || ''));
+    return Number(b.unrealizedPnlUsd || 0) - Number(a.unrealizedPnlUsd || 0);
+  });
   const list = $('positionsList');
-  if (!positions.length) { list.innerHTML = emptyState('◎', 'No open positions', 'Search for a token and place your first paper trade.'); return; }
+  if (!positions.length) { list.innerHTML = emptyState('◎', state.positions.length ? 'No matching positions' : 'No open positions', state.positions.length ? 'Try a different symbol or contract.' : 'Search for a token and place your first paper trade.'); return; }
   list.replaceChildren();
   positions.forEach((position) => {
     const row = document.createElement('article'); row.className = 'position';
     const unavailable = number(position.currentPriceUsd) === null;
-    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid position-market"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div><div><span>Market cap</span><strong>${compact(position.marketCapUsd)}</strong></div><div><span>Liquidity</span><strong>${compact(position.liquidityUsd)}</strong></div><div><span>24h volume</span><strong>${compact(position.volume24hUsd)}</strong></div></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button copy-position" type="button">Copy CA</button><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
+    const allocation = Number(state.wallet.equityUsd) > 0 ? Math.max(0, Number(position.currentValueUsd || 0) / Number(state.wallet.equityUsd) * 100) : 0;
+    row.innerHTML = `<div class="row-between"><div class="asset-name"><strong></strong><span></span></div><div class="position-price"><strong>${unavailable ? 'Price unavailable' : price(position.currentPriceUsd)}</strong><span class="updated">${position.priceUpdatedAt ? relativeTime(position.priceUpdatedAt) : ''}</span></div></div><div class="position-grid position-market"><div><span>Invested</span><strong>${money(position.investedUsd)}</strong></div><div><span>Current value</span><strong>${money(position.currentValueUsd)}</strong></div><div><span>Entry price</span><strong>${price(position.entryPriceUsd)}</strong></div><div><span>Market cap</span><strong>${compact(position.marketCapUsd)}</strong></div><div><span>Liquidity</span><strong>${compact(position.liquidityUsd)}</strong></div><div><span>24h volume</span><strong>${compact(position.volume24hUsd)}</strong></div></div><div class="allocation"><span>Portfolio allocation</span><strong>${allocation.toFixed(1)}%</strong><i><b style="width:${Math.min(100, allocation)}%"></b></i></div><div class="position-footer"><span class="pnl ${tone(position.unrealizedPnlUsd)}">${unavailable ? 'Waiting for price' : `${signedMoney(position.unrealizedPnlUsd)} (${percent(position.unrealizedPnlPct)})`}</span><span><button class="text-button copy-position" type="button">Copy CA</button><button class="text-button exits" type="button">Set exits</button><button class="sell-button" type="button" ${unavailable ? 'disabled' : ''}>Review sell</button></span></div>`;
     row.querySelector('.asset-name strong').textContent = position.symbol || position.tokenName || 'TOKEN';
     row.querySelector('.asset-name span').textContent = `${chainName(position.chain)} · ${quantity(position.quantity)} tokens`;
     row.querySelector('.sell-button').addEventListener('click', () => reviewSell(position)); list.appendChild(row);
     row.querySelector('.copy-position').addEventListener('click', () => copyText(position.tokenAddress, 'Contract address copied.'));
     row.querySelector('.exits').addEventListener('click', () => setExit(position));
   });
+}
+
+async function loadOrders() {
+  try {
+    const { orders = [] } = await api('/api/orders');
+    $('orderCount').textContent = String(orders.length);
+    const list = $('ordersList');
+    if (!orders.length) { list.innerHTML = emptyState('◇', 'No active orders', 'Set a stop-loss or take-profit from an open position.'); return; }
+    list.replaceChildren();
+    orders.forEach(order => {
+      const row = document.createElement('article'); row.className = 'order-item';
+      row.innerHTML = `<div><span class="order-type ${order.type}">${order.type === 'stop_loss' ? 'Stop loss' : 'Take profit'}</span><strong></strong><small>${order.percentToSell}% at ${price(order.triggerPriceUsd)} · ${dateTime(order.createdAt)}</small></div><button class="text-button" type="button">Cancel</button>`;
+      row.querySelector('strong').textContent = `${order.symbol || order.tokenName || 'Token'} · ${chainName(order.chain)}`;
+      row.querySelector('button').onclick = async () => { await api(`/api/orders/${order.id}`, { method: 'DELETE' }); await loadOrders(); toast('Exit order cancelled.'); };
+      list.appendChild(row);
+    });
+  } catch (_) {}
+}
+
+async function loadProviderStatus() {
+  try {
+    const { providers = [] } = await api('/api/providers/status');
+    $('providerStatus').replaceChildren(...providers.map(provider => { const el=document.createElement('span'); el.className=`provider ${provider.status}`; el.innerHTML='<i></i>'; el.append(document.createTextNode(provider.name)); return el; }));
+  } catch (_) {}
 }
 
 async function refreshTrades() {
@@ -334,6 +374,9 @@ function bindEvents() {
   $('portfolioSelect').addEventListener('change', async event => { state.portfolio=event.target.value; localStorage.setItem('pt_portfolio',state.portfolio); updatePortfolioControls(); await refreshV2(); await refreshAll(); });
   $('authBtn').addEventListener('click', authDialog);
   $('refreshTrending').addEventListener('click', loadTrending);
+  $('positionFilter').addEventListener('input', renderPositions);
+  $('positionSort').addEventListener('change', renderPositions);
+  $('installBtn').addEventListener('click', installApp);
   document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => selectTab(button.dataset.tab)));
   window.addEventListener('online', updateConnectionStatus); window.addEventListener('offline', updateConnectionStatus);
 }
@@ -370,10 +413,14 @@ async function loadTrending(){try{const {tokens=[]}=await api('/api/trending');c
 async function addWatch(){await api('/api/watchlist',{method:'POST',body:JSON.stringify(state.token)});toast('Added to watchlist.');}
 async function loadWatchlist(){try{const {tokens=[]}=await api('/api/watchlist');const list=$('watchlistList');list.replaceChildren();if(!tokens.length){list.innerHTML=emptyState('☆','Watchlist empty','Save tokens to follow them without buying.');return;}tokens.forEach(t=>{const row=document.createElement('div');row.className='result-item watch-row';const b=document.createElement('button');b.type='button';b.className='watch-open';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);const remove=document.createElement('button');remove.type='button';remove.className='watch-remove';remove.textContent='Remove';remove.onclick=async()=>{await api(`/api/watchlist/${t.id}`,{method:'DELETE'});await loadWatchlist();toast('Removed from watchlist.');};row.append(b,remove);list.appendChild(row);});}catch(_) {}}
 async function loadBalanceHistory(){try{const {history=[]}=await api('/api/balance-history');const list=$('balanceHistory');list.innerHTML=history.length?history.slice(0,20).map(t=>`<div class="trade-item row-between"><span><strong>${t.type==='deposit'?'Deposit':'Withdrawal'}</strong><small class="updated"> ${dateTime(t.createdAt)}</small></span><strong class="${t.type==='deposit'?'positive':'negative'}">${t.type==='deposit'?'+':'-'}${money(t.amountUsd)}</strong></div>`).join(''):emptyState('↕','No cash activity','Deposits and withdrawals appear here.');}catch(_) {}}
-function setExit(position){openModal(`Set exits for ${position.symbol}`,'<label class="form-label">Stop-loss price (optional)</label><input id="stopPrice" class="modal-input" type="number" step="any"><label class="form-label" style="margin-top:12px">Take-profit price (optional)</label><input id="takePrice" class="modal-input" type="number" step="any">',async()=>{const stop=Number($('stopPrice').value),take=Number($('takePrice').value);if(!(stop>0)&&!(take>0))throw new Error('Enter at least one trigger price.');if(stop>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'stop_loss',triggerPriceUsd:stop,percentToSell:100})});if(take>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'take_profit',triggerPriceUsd:take,percentToSell:100})});toast('Exit orders saved.');},'Save exits');}
-async function refreshV2(){await Promise.allSettled([loadPortfolios(),loadStats(),loadHistory(),loadWatchlist(),loadBalanceHistory()]);}
+function setExit(position){openModal(`Set exits for ${position.symbol}`,'<label class="form-label">Stop-loss price (optional)</label><input id="stopPrice" class="modal-input" type="number" step="any"><label class="form-label" style="margin-top:12px">Take-profit price (optional)</label><input id="takePrice" class="modal-input" type="number" step="any">',async()=>{const stop=Number($('stopPrice').value),take=Number($('takePrice').value);if(!(stop>0)&&!(take>0))throw new Error('Enter at least one trigger price.');if(stop>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'stop_loss',triggerPriceUsd:stop,percentToSell:100})});if(take>0)await api('/api/orders',{method:'POST',body:JSON.stringify({positionId:position.id,type:'take_profit',triggerPriceUsd:take,percentToSell:100})});await loadOrders();toast('Exit orders saved.');},'Save exits');}
+async function refreshV2(){await Promise.allSettled([loadPortfolios(),loadStats(),loadHistory(),loadWatchlist(),loadBalanceHistory(),loadOrders(),loadProviderStatus()]);}
+
+async function installApp(){if(!state.installPrompt)return;state.installPrompt.prompt();await state.installPrompt.userChoice;state.installPrompt=null;hide('installBtn');}
+function setupPwa(){window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();state.installPrompt=event;show('installBtn');});window.addEventListener('appinstalled',()=>{state.installPrompt=null;hide('installBtn');toast('PaperTrade installed.');});if('serviceWorker' in navigator&&!/jsdom/i.test(navigator.userAgent))navigator.serviceWorker.register('/service-worker.js').catch(()=>{});}
 
 async function init() {
+  setupPwa();
   bindEvents();
   updateConnectionStatus();
   const hash=new URLSearchParams(location.hash.replace(/^#/,''));

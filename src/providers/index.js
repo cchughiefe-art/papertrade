@@ -191,11 +191,25 @@ async function getTrending() {
   return tokens;
 }
 
+function getProviderStatus() {
+  return {
+    cacheEntries: cache.size,
+    queuedPrices: pendingPrices.size,
+    providers: [
+      { name: 'DexScreener', role: 'primary', status: 'ready' },
+      { name: 'DexPaprika', role: 'fallback', status: 'ready' },
+      { name: 'GeckoTerminal', role: 'fallback', status: 'ready' },
+      { name: 'Robinhood', role: 'stock tokens', status: 'ready' }
+    ]
+  };
+}
+
 module.exports = {
   resolveToken,
   getPrice,
   getPrices,
   getSolPrice,
   searchTokens,
-  getTrending
+  getTrending,
+  getProviderStatus
 };

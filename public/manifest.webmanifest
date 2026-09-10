@@ -1,0 +1,15 @@
+{
+  "name": "PaperTrade — Live Market Simulator",
+  "short_name": "PaperTrade",
+  "description": "Practice crypto and stock-token trading with live market data and no real funds.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070908",
+  "theme_color": "#070908",
+  "categories": ["finance", "education"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
