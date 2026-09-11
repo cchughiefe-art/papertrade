@@ -29,6 +29,9 @@ test('primary UI actions call their matching APIs', async () => {
     if (url === '/api/wallet') return response({ wallet: { cashUsd: 10000, positionValueUsd: 0, equityUsd: 10000, realizedPnlUsd: 0, unrealizedPnlUsd: 0, equitySol: 66.6667, solPriceUsd: 150 } });
     if (url === '/api/positions') return response({ positions: hasPosition ? [{ id: 1, chain: 'solana', tokenAddress: token.address, tokenName: token.name, symbol: token.symbol, quantity: 2, investedUsd: 200, costBasisUsd: 200, entryPriceUsd: 100, currentPriceUsd: 150, currentValueUsd: 300, unrealizedPnlUsd: 100, unrealizedPnlPct: 50, priceUpdatedAt: new Date().toISOString() }] : [] });
     if (url === '/api/trades') return response({ trades: [] });
+    if (url === '/api/orders' && !options.method) return response({ orders: [] });
+    if (url === '/api/providers/status') return response({ providers: [{ name: 'DexScreener', status: 'healthy' }] });
+    if (url === '/api/risk-settings' && !options.method) return response({ settings: { maxPositionPct: 100, dailyLossLimitUsd: 0 } });
     if (url === '/api/watchlist' && !options.method) return response({ tokens: watchlisted ? [{ id: 7, ...token }] : [] });
     if (url === '/api/watchlist/7' && options.method === 'DELETE') watchlisted = false;
     if (String(url).startsWith('/api/token/search')) return response({ results: [token] });
@@ -62,9 +65,17 @@ test('primary UI actions call their matching APIs', async () => {
   window.document.querySelector('[data-tab="portfolio"]').click();
   assert.equal(window.document.querySelector('[data-view="portfolio"]').classList.contains('hidden'), false);
   assert.match(window.document.getElementById('positionsList').textContent, /Market cap/);
+  assert.match(window.document.getElementById('positionsList').textContent, /Break-even/);
   window.document.querySelector('.copy-position').click();
   await tick();
   assert.equal(copied, token.address);
+
+  window.document.querySelector('.exits').click();
+  window.document.getElementById('stopPrice').value = '120';
+  window.document.getElementById('exitPercent').value = '50';
+  window.document.getElementById('modalConfirm').click();
+  await tick();
+  assert.ok(calls.some((call) => call.url === '/api/orders' && call.method === 'POST' && JSON.parse(call.body).percentToSell === 50));
 
   window.document.querySelector('.sell-button').click();
   window.document.getElementById('modalConfirm').click();

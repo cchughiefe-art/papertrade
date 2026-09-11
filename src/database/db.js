@@ -156,13 +156,28 @@ async function initDb() {
       id SERIAL PRIMARY KEY,
       session_id TEXT NOT NULL,
       position_id INTEGER NOT NULL,
-      order_type TEXT NOT NULL CHECK (order_type IN ('stop_loss','take_profit')),
+      order_type TEXT NOT NULL CHECK (order_type IN ('stop_loss','take_profit','trailing_stop')),
       trigger_price_usd DOUBLE PRECISION NOT NULL,
       percent_to_sell DOUBLE PRECISION NOT NULL DEFAULT 100,
+      trailing_percent DOUBLE PRECISION,
+      high_water_price_usd DOUBLE PRECISION,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       executed_at TIMESTAMPTZ
     )`);
+
+    await query(`ALTER TABLE conditional_orders ADD COLUMN IF NOT EXISTS trailing_percent DOUBLE PRECISION`);
+    await query(`CREATE TABLE IF NOT EXISTS risk_settings (
+      session_id TEXT PRIMARY KEY,
+      max_position_pct DOUBLE PRECISION NOT NULL DEFAULT 100,
+      daily_loss_limit_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await query(`ALTER TABLE conditional_orders ADD COLUMN IF NOT EXISTS high_water_price_usd DOUBLE PRECISION`);
+    await query(`ALTER TABLE conditional_orders DROP CONSTRAINT IF EXISTS conditional_orders_order_type_check`);
+    await query(`ALTER TABLE conditional_orders ADD CONSTRAINT conditional_orders_order_type_check CHECK (order_type IN ('stop_loss','take_profit','trailing_stop'))`);
+    await query(`UPDATE conditional_orders o SET status='cancelled' WHERE status='active' AND EXISTS (SELECT 1 FROM conditional_orders newer WHERE newer.session_id=o.session_id AND newer.position_id=o.position_id AND newer.order_type=o.order_type AND newer.status='active' AND newer.id>o.id)`);
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_unique_active_type ON conditional_orders(session_id, position_id, order_type) WHERE status='active'`);
 
     await query(
       `CREATE INDEX IF NOT EXISTS idx_positions_session ON positions(session_id)`

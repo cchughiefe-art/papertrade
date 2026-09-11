@@ -6,6 +6,8 @@ const paprika = require('./dexpaprika');
 const cache = new Map();
 const pendingPrices = new Map();
 let pendingTimer = null;
+const providerHealth = new Map(['DexScreener','DexPaprika','GeckoTerminal','Robinhood'].map(name => [name, { status: 'waiting', lastCheckedAt: null }]));
+function markProvider(name, ok) { providerHealth.set(name, { status: ok ? 'healthy' : 'degraded', lastCheckedAt: new Date().toISOString() }); }
 
 const PRICE_TTL = 15000;
 const STALE_TTL = 120000;
@@ -114,13 +116,13 @@ async function flushPriceQueue() {
   const values = new Array(tokens.length).fill(null);
   const robinhoodItems = [], dexItems = [];
   tokens.forEach((token, index) => (String(token.chain).toLowerCase() === 'robinhood' ? robinhoodItems : dexItems).push({ ...token, index }));
-  if (dexItems.length) try { (await dexscreener.getPrices(dexItems)).forEach((value, i) => { values[dexItems[i].index] = value; }); } catch (_) {}
-  if (robinhoodItems.length) try { (await robinhood.getPrices(robinhoodItems)).forEach((value, i) => { values[robinhoodItems[i].index] = value; }); } catch (_) {}
+  if (dexItems.length) try { (await dexscreener.getPrices(dexItems)).forEach((value, i) => { values[dexItems[i].index] = value; }); markProvider('DexScreener', true); } catch (_) { markProvider('DexScreener', false); }
+  if (robinhoodItems.length) try { (await robinhood.getPrices(robinhoodItems)).forEach((value, i) => { values[robinhoodItems[i].index] = value; }); markProvider('Robinhood', true); } catch (_) { markProvider('Robinhood', false); }
   const paprikaItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
-  if (paprikaItems.length) try { (await paprika.getPrices(paprikaItems)).forEach((value, i) => { if (value) values[paprikaItems[i].index] = value; }); } catch (_) {}
+  if (paprikaItems.length) try { (await paprika.getPrices(paprikaItems)).forEach((value, i) => { if (value) values[paprikaItems[i].index] = value; }); markProvider('DexPaprika', true); } catch (_) { markProvider('DexPaprika', false); }
   const geckoItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
   let cursor = 0;
-  async function geckoWorker() { while (cursor < geckoItems.length) { const item = geckoItems[cursor++]; try { values[item.index] = await gecko.getPrice(item.address, item.chain); } catch (_) {} } }
+  async function geckoWorker() { while (cursor < geckoItems.length) { const item = geckoItems[cursor++]; try { values[item.index] = await gecko.getPrice(item.address, item.chain); markProvider('GeckoTerminal', true); } catch (_) { markProvider('GeckoTerminal', false); } } }
   await Promise.all(Array.from({ length: Math.min(3, geckoItems.length) }, geckoWorker));
   entries.forEach(([k, entry], index) => {
     let value = values[index];
@@ -192,14 +194,15 @@ async function getTrending() {
 }
 
 function getProviderStatus() {
+  const provider = (name, role) => ({ name, role, ...(providerHealth.get(name) || { status: 'waiting', lastCheckedAt: null }) });
   return {
     cacheEntries: cache.size,
     queuedPrices: pendingPrices.size,
     providers: [
-      { name: 'DexScreener', role: 'primary', status: 'ready' },
-      { name: 'DexPaprika', role: 'fallback', status: 'ready' },
-      { name: 'GeckoTerminal', role: 'fallback', status: 'ready' },
-      { name: 'Robinhood', role: 'stock tokens', status: 'ready' }
+      provider('DexScreener', 'primary'),
+      provider('DexPaprika', 'fallback'),
+      provider('GeckoTerminal', 'fallback'),
+      provider('Robinhood', 'stock tokens')
     ]
   };
 }

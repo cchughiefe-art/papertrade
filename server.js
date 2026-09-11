@@ -790,6 +790,10 @@ app.get(
               item.price?.source ??
               null,
 
+            source:
+              item.price?.source ??
+              null,
+
             stale:
               item.price?.stale ??
               false,
@@ -1061,9 +1065,25 @@ app.post(
         });
       }
 
+      const id = sessionId(req);
+      const rules = await one(`SELECT max_position_pct,daily_loss_limit_usd FROM risk_settings WHERE session_id=$1`,[id]);
+      if (rules) {
+        const dailyLossLimit = Number(rules.daily_loss_limit_usd || 0);
+        if (dailyLossLimit > 0) {
+          const daily = await one(`SELECT COALESCE(SUM(pnl_usd),0) AS pnl FROM trades WHERE session_id=$1 AND side='SELL' AND created_at>=CURRENT_DATE`,[id]);
+          if (Number(daily?.pnl || 0) <= -dailyLossLimit) return res.status(400).json({ok:false,error:`Daily loss limit of $${dailyLossLimit.toFixed(2)} reached`});
+        }
+        const valuation = await liveValuation(id);
+        const summary = await walletResponse(id);
+        const existing = valuation.enriched.find(item=>String(item.position.chain).toLowerCase()===chain.toLowerCase()&&String(item.position.tokenAddress).toLowerCase()===address.toLowerCase());
+        const projected = Number(existing?.currentValueUsd || 0) + amountUsd;
+        const maximum = Number(summary.equityUsd || 0) * Number(rules.max_position_pct || 100) / 100;
+        if (projected > maximum + 0.01) return res.status(400).json({ok:false,error:`This buy would exceed your ${Number(rules.max_position_pct)}% position limit`});
+      }
+
       const result =
         await buy(
-          sessionId(req),
+          id,
           {
             chain,
             address,
@@ -1095,9 +1115,6 @@ app.post(
               token.source
           }
         );
-
-      const id =
-        sessionId(req);
 
       res.json({
         ok: true,
@@ -1349,6 +1366,10 @@ app.get('/api/statistics', async (req, res) => {
   } catch (error) { errorResponse(res, error); }
 });
 
+app.get('/api/risk-settings', async(req,res)=>{try{await initDb();const id=sessionId(req);await query(`INSERT INTO risk_settings(session_id) VALUES($1) ON CONFLICT DO NOTHING`,[id]);const settings=await one(`SELECT max_position_pct AS "maxPositionPct",daily_loss_limit_usd AS "dailyLossLimitUsd" FROM risk_settings WHERE session_id=$1`,[id]);res.json({ok:true,settings});}catch(error){errorResponse(res,error);}});
+
+app.put('/api/risk-settings', async(req,res)=>{try{await initDb();const id=sessionId(req),maxPct=Number(req.body?.maxPositionPct),lossLimit=Number(req.body?.dailyLossLimitUsd);if(!Number.isFinite(maxPct)||maxPct<=0||maxPct>100)throw new Error('Maximum position must be between 1% and 100%');if(!Number.isFinite(lossLimit)||lossLimit<0)throw new Error('Daily loss limit cannot be negative');await query(`INSERT INTO risk_settings(session_id,max_position_pct,daily_loss_limit_usd) VALUES($1,$2,$3) ON CONFLICT(session_id) DO UPDATE SET max_position_pct=$2,daily_loss_limit_usd=$3,updated_at=NOW()`,[id,maxPct,lossLimit]);res.json({ok:true,settings:{maxPositionPct:maxPct,dailyLossLimitUsd:lossLimit}});}catch(error){errorResponse(res,error);}});
+
 app.get('/api/trades.csv', async (req, res) => {
   try {
     const trades = await getTrades(sessionId(req));
@@ -1418,6 +1439,7 @@ app.delete('/api/portfolios/:key', async (req, res) => {
     const id = `${owner}::${key}`;
     await client.query('BEGIN');
     await client.query(`DELETE FROM conditional_orders WHERE session_id=$1`, [id]);
+    await client.query(`DELETE FROM risk_settings WHERE session_id=$1`, [id]);
     await client.query(`DELETE FROM watchlist WHERE session_id=$1`, [id]);
     await client.query(`DELETE FROM equity_history WHERE session_id=$1`, [id]);
     await client.query(`DELETE FROM balance_transactions WHERE session_id=$1`, [id]);
@@ -1454,12 +1476,25 @@ app.delete('/api/watchlist/:id', async (req, res) => {
 });
 
 app.get('/api/orders', async (req,res) => {
-  try { await initDb(); res.json({ok:true,orders:await many(`SELECT o.id,o.position_id AS "positionId",o.order_type AS "type",o.trigger_price_usd AS "triggerPriceUsd",o.percent_to_sell AS "percentToSell",o.status,o.created_at AS "createdAt",p.symbol,p.token_name AS "tokenName",p.chain,p.token_address AS "tokenAddress" FROM conditional_orders o JOIN positions p ON p.id=o.position_id AND p.session_id=o.session_id WHERE o.session_id=$1 AND o.status='active' ORDER BY o.id DESC`,[sessionId(req)])}); } catch(error){errorResponse(res,error);}
+  try { await initDb(); res.json({ok:true,orders:await many(`SELECT o.id,o.position_id AS "positionId",o.order_type AS "type",o.trigger_price_usd AS "triggerPriceUsd",o.percent_to_sell AS "percentToSell",o.trailing_percent AS "trailingPercent",o.high_water_price_usd AS "highWaterPriceUsd",o.status,o.created_at AS "createdAt",p.symbol,p.token_name AS "tokenName",p.chain,p.token_address AS "tokenAddress" FROM conditional_orders o JOIN positions p ON p.id=o.position_id AND p.session_id=o.session_id WHERE o.session_id=$1 AND o.status='active' ORDER BY o.id DESC`,[sessionId(req)])}); } catch(error){errorResponse(res,error);}
 });
 
 app.post('/api/orders', async (req,res) => {
-  try { await initDb(); const id=sessionId(req); const positionId=Number(req.body?.positionId); const type=req.body?.type; const trigger=Number(req.body?.triggerPriceUsd); const percent=Number(req.body?.percentToSell || 100); if(!await getPosition(id,positionId)) throw new Error('Position not found'); if(!['stop_loss','take_profit'].includes(type)||!validPositiveNumber(trigger)||percent<=0||percent>100) throw new Error('Invalid conditional order'); await query(`INSERT INTO conditional_orders(session_id,position_id,order_type,trigger_price_usd,percent_to_sell) VALUES($1,$2,$3,$4,$5)`,[id,positionId,type,trigger,percent]); res.json({ok:true}); } catch(error){errorResponse(res,error);}
+  try {
+    await initDb(); const id=sessionId(req); const positionId=Number(req.body?.positionId); const type=req.body?.type; const percent=Number(req.body?.percentToSell || 100); const trailing=Number(req.body?.trailingPercent); const position=await getPosition(id,positionId);
+    if(!position) throw new Error('Position not found');
+    if(!['stop_loss','take_profit','trailing_stop'].includes(type)||percent<=0||percent>100) throw new Error('Invalid conditional order');
+    let trigger=Number(req.body?.triggerPriceUsd); let highWater=null;
+    if(type==='trailing_stop') { if(!validPositiveNumber(trailing)||trailing>90) throw new Error('Trailing distance must be between 0 and 90%'); const market=await getPrice(position.chain,position.tokenAddress); highWater=Number(market?.priceUsd); if(!validPositiveNumber(highWater)) throw new Error('A live price is required for a trailing stop'); trigger=highWater*(1-trailing/100); }
+    if(!validPositiveNumber(trigger)) throw new Error('A valid trigger price is required');
+    await query(`INSERT INTO conditional_orders(session_id,position_id,order_type,trigger_price_usd,percent_to_sell,trailing_percent,high_water_price_usd) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id,position_id,order_type) WHERE status='active' DO UPDATE SET trigger_price_usd=EXCLUDED.trigger_price_usd,percent_to_sell=EXCLUDED.percent_to_sell,trailing_percent=EXCLUDED.trailing_percent,high_water_price_usd=EXCLUDED.high_water_price_usd,created_at=NOW()`,[id,positionId,type,trigger,percent,type==='trailing_stop'?trailing:null,highWater]);
+    res.json({ok:true});
+  } catch(error){errorResponse(res,error);}
 });
+
+app.put('/api/orders/:id', async(req,res)=>{try{await initDb();const id=sessionId(req),orderId=Number(req.params.id),trigger=Number(req.body?.triggerPriceUsd),percent=Number(req.body?.percentToSell),trailing=Number(req.body?.trailingPercent);const order=await one(`SELECT * FROM conditional_orders WHERE id=$1 AND session_id=$2 AND status='active'`,[orderId,id]);if(!order)throw new Error('Active order not found');if(percent<=0||percent>100)throw new Error('Sell percentage must be between 1 and 100');if(order.order_type==='trailing_stop'){if(!validPositiveNumber(trailing)||trailing>90)throw new Error('Trailing distance must be between 0 and 90%');const high=Number(order.high_water_price_usd);await query(`UPDATE conditional_orders SET percent_to_sell=$1,trailing_percent=$2,trigger_price_usd=$3 WHERE id=$4 AND session_id=$5`,[percent,trailing,high*(1-trailing/100),orderId,id]);}else{if(!validPositiveNumber(trigger))throw new Error('A valid trigger price is required');await query(`UPDATE conditional_orders SET percent_to_sell=$1,trigger_price_usd=$2 WHERE id=$3 AND session_id=$4`,[percent,trigger,orderId,id]);}res.json({ok:true});}catch(error){errorResponse(res,error);}});
+
+app.delete('/api/orders', async(req,res)=>{try{await initDb();const result=await query(`UPDATE conditional_orders SET status='cancelled' WHERE session_id=$1 AND status='active'`,[sessionId(req)]);res.json({ok:true,cancelled:result.rowCount});}catch(error){errorResponse(res,error);}});
 
 app.delete('/api/orders/:id', async(req,res)=>{try{await initDb();await query(`UPDATE conditional_orders SET status='cancelled' WHERE id=$1 AND session_id=$2`,[Number(req.params.id),sessionId(req)]);res.json({ok:true});}catch(error){errorResponse(res,error);}});
 
@@ -1475,9 +1510,15 @@ async function processConditionalOrders() {
     try {
       const market = await getPrice(order.chain, order.token_address);
       const current = Number(market?.priceUsd);
-      const trigger = Number(order.trigger_price_usd);
-      const hit = order.order_type === 'stop_loss' ? current <= trigger : current >= trigger;
-      if (!Number.isFinite(current) || !hit) continue;
+      if (!Number.isFinite(current) || current <= 0) continue;
+      let trigger = Number(order.trigger_price_usd);
+      if (order.order_type === 'trailing_stop') {
+        const highWater = Math.max(Number(order.high_water_price_usd || 0), current);
+        trigger = highWater * (1 - Number(order.trailing_percent) / 100);
+        if (highWater !== Number(order.high_water_price_usd) || trigger !== Number(order.trigger_price_usd)) await query(`UPDATE conditional_orders SET high_water_price_usd=$1,trigger_price_usd=$2 WHERE id=$3 AND status='active'`,[highWater,trigger,order.id]);
+      }
+      const hit = order.order_type === 'take_profit' ? current >= trigger : current <= trigger;
+      if (!hit) continue;
       const claimed = await query(`UPDATE conditional_orders SET status='executing' WHERE id=$1 AND status='active' RETURNING id`, [order.id]);
       if (!claimed.rowCount) continue;
       const position = await getPosition(order.session_id, order.position_id);

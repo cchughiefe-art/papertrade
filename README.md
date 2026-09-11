@@ -19,6 +19,12 @@ PaperTrade never connects to a wallet, stores private keys, sends blockchain tra
 - Durable PostgreSQL storage through Supabase or another Postgres provider
 - Responsive, mobile-first interface with accessible review dialogs
 - Stale-price protection for trade execution
+- Installable Android progressive web app with a privacy-safe offline shell
+- Editable stop-loss, take-profit, and trailing-stop orders
+- Duplicate-order protection and one-tap cancellation of all active exits
+- Average entry, estimated break-even, allocation, and price-source details
+- Server-enforced maximum position size and daily realized-loss limits
+- Live provider-health display for the free market-data fallback stack
 
 ## Run locally
 

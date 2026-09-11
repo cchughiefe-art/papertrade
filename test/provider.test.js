@@ -20,6 +20,7 @@ test('price cache keeps different tokens isolated', async () => {
     assert.equal(first.priceUsd, 1.25);
     assert.equal(second.priceUsd, 9.75);
     assert.equal(seen.length, 2);
+    assert.equal(provider.getProviderStatus().providers.find(item => item.name === 'DexScreener').status, 'healthy');
   } finally { global.fetch = originalFetch; }
 });
 
