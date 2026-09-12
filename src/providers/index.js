@@ -172,6 +172,12 @@ async function searchTokens(query) {
     ? results.filter(item => item && item.chain && item.address && item.name && item.symbol)
     : [];
 
+  // Search results come directly from the provider and are safe to reuse for a
+  // short time. Seeding the price cache prevents a second provider request
+  // between opening the buy review and confirming the paper trade.
+  usable.forEach(item => {
+    if (isUsablePrice(item)) setCached(key(item.chain, item.address), item, PRICE_TTL);
+  });
   setCached(cacheKey, usable, 5000);
   return usable;
 }

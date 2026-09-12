@@ -80,3 +80,23 @@ test('DexPaprika supplies a batched fallback when DexScreener is limited', async
     assert.equal(seen.filter(url => url.includes('dexpaprika')).length, 1);
   } finally { global.fetch = originalFetch; }
 });
+
+test('search seeds the price cache for immediate trade confirmation', async () => {
+  const originalFetch = global.fetch;
+  let requests = 0;
+  const address = '0xd6fde6a3fc6ab2d83b2be58383944ca1bade1e18';
+  global.fetch = async () => {
+    requests += 1;
+    return { ok: true, json: async () => ({ pairs: [{ chainId: 'base', pairAddress: 'pair-catgpt', priceUsd: '0.0163', priceNative: '0.00001', baseToken: { address, name: 'CATGPT', symbol: 'CATGPT' }, quoteToken: { address: '0xquote', name: 'Wrapped Ether', symbol: 'WETH' }, liquidity: { usd: 25000 }, volume: { h24: 5000 }, priceChange: { h24: 2 } }] }) };
+  };
+  for (const module of ['../src/providers', '../src/providers/dexscreener']) delete require.cache[require.resolve(module)];
+  const provider = require('../src/providers');
+  try {
+    const results = await provider.searchTokens(address);
+    const requestsAfterSearch = requests;
+    const price = await provider.getPrice('base', address);
+    assert.equal(results[0].symbol, 'CATGPT');
+    assert.equal(price.priceUsd, 0.0163);
+    assert.equal(requests, requestsAfterSearch);
+  } finally { global.fetch = originalFetch; }
+});
