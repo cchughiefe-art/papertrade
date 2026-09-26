@@ -2,11 +2,12 @@ const dexscreener = require('./dexscreener');
 const gecko = require('./geckoterminal');
 const robinhood = require('./robinhood');
 const paprika = require('./dexpaprika');
+const defillama = require('./defillama');
 
 const cache = new Map();
 const pendingPrices = new Map();
 let pendingTimer = null;
-const providerHealth = new Map(['DexScreener','DexPaprika','GeckoTerminal','Robinhood'].map(name => [name, { status: 'waiting', lastCheckedAt: null }]));
+const providerHealth = new Map(['DexScreener','DexPaprika','DefiLlama','GeckoTerminal','Robinhood'].map(name => [name, { status: 'waiting', lastCheckedAt: null }]));
 function markProvider(name, ok) { providerHealth.set(name, { status: ok ? 'healthy' : 'degraded', lastCheckedAt: new Date().toISOString() }); }
 
 const PRICE_TTL = 15000;
@@ -120,6 +121,8 @@ async function flushPriceQueue() {
   if (robinhoodItems.length) try { (await robinhood.getPrices(robinhoodItems)).forEach((value, i) => { values[robinhoodItems[i].index] = value; }); markProvider('Robinhood', true); } catch (_) { markProvider('Robinhood', false); }
   const paprikaItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
   if (paprikaItems.length) try { (await paprika.getPrices(paprikaItems)).forEach((value, i) => { if (value) values[paprikaItems[i].index] = value; }); markProvider('DexPaprika', true); } catch (_) { markProvider('DexPaprika', false); }
+  const llamaItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
+  if (llamaItems.length) try { (await defillama.getPrices(llamaItems)).forEach((value, i) => { if (value) values[llamaItems[i].index] = value; }); markProvider('DefiLlama', true); } catch (_) { markProvider('DefiLlama', false); }
   const geckoItems = dexItems.filter(item => !isUsablePrice(values[item.index]));
   let cursor = 0;
   async function geckoWorker() { while (cursor < geckoItems.length) { const item = geckoItems[cursor++]; try { values[item.index] = await gecko.getPrice(item.address, item.chain); markProvider('GeckoTerminal', true); } catch (_) { markProvider('GeckoTerminal', false); } } }
@@ -207,6 +210,7 @@ function getProviderStatus() {
     providers: [
       provider('DexScreener', 'primary'),
       provider('DexPaprika', 'fallback'),
+      provider('DefiLlama', 'price fallback'),
       provider('GeckoTerminal', 'fallback'),
       provider('Robinhood', 'stock tokens')
     ]

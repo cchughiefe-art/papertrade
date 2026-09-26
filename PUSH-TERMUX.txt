@@ -1,0 +1,32 @@
+PAPERTRADE V6 - TERMUX PUSH GUIDE
+
+This ZIP contains the complete upgraded project without node_modules or Git history.
+
+1. In Termux, enter your existing repository:
+
+   cd ~/papertrade
+
+2. Back up your current working tree if you have uncommitted changes:
+
+   git status
+
+3. Extract the upgrade over the repository:
+
+   unzip -o ~/storage/downloads/PaperTrade-V6-Termux.zip -d /tmp/papertrade-v6
+   cp -r /tmp/papertrade-v6/PaperTrade-V6/. ~/papertrade/
+
+4. Install and verify:
+
+   cd ~/papertrade
+   npm ci
+   npm run check
+
+5. Commit and push:
+
+   git config user.name "cchughiefe-art"
+   git config user.email "cchughiefe-art@users.noreply.github.com"
+   git add -A
+   git commit -m "Upgrade PaperTrade analytics and memecoin coverage"
+   git push origin main
+
+If GitHub requests authentication, use your GitHub username and a Personal Access Token, not your GitHub password.

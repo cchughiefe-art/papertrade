@@ -13,7 +13,9 @@ const {
 } = require('./src/providers');
 
 const {
-  isValidAddress
+  isValidAddress,
+  isValidMarketToken,
+  isResolvableAddress
 } = require('./src/chains');
 
 const {
@@ -29,6 +31,7 @@ const {
   reset
 } = require('./src/trading/engine');
 const { initDb, getDatabaseStatus, recordEquity, getEquityHistory, pool } = require('./src/database/db');
+const { calculateStatistics } = require('./src/analytics');
 
 const app = express();
 const { query, many, one } = require('./src/database/db');
@@ -458,7 +461,7 @@ app.get(
       const validChains =
         isValidAddress(address);
 
-      if (!validChains.length) {
+      if (!validChains.length && !isResolvableAddress(address)) {
         return res.status(400).json({
           ok: false,
           error:
@@ -585,8 +588,7 @@ app.get(
       if (
         !chain ||
         !address ||
-        !isValidAddress(address)
-          .includes(chain)
+        !isValidMarketToken(chain, address)
       ) {
         return res.status(400).json({
           ok: false,
@@ -639,8 +641,7 @@ app.get(
       if (
         !chain ||
         !address ||
-        !isValidAddress(address)
-          .includes(chain)
+        !isValidMarketToken(chain, address)
       ) {
         return res.status(400).json({
           ok: false,
@@ -1024,8 +1025,7 @@ app.post(
       if (
         !chain ||
         !address ||
-        !isValidAddress(address)
-          .includes(chain)
+        !isValidMarketToken(chain, address)
       ) {
         return res.status(400).json({
           ok: false,
@@ -1357,12 +1357,9 @@ app.get('/api/equity-history', async (req, res) => {
 
 app.get('/api/statistics', async (req, res) => {
   try {
-    const trades = await getTrades(sessionId(req));
-    const sells = trades.filter(t => t.side === 'SELL');
-    const wins = sells.filter(t => Number(t.pnlUsd) > 0);
-    const totalPnlUsd = sells.reduce((sum, t) => sum + Number(t.pnlUsd || 0), 0);
-    const totalFeesUsd = trades.reduce((sum, t) => sum + Number(t.feeUsd || 0), 0);
-    res.json({ ok: true, statistics: { trades: trades.length, closedTrades: sells.length, wins: wins.length, losses: sells.length - wins.length, winRate: sells.length ? wins.length / sells.length * 100 : 0, totalPnlUsd, totalFeesUsd, bestTradeUsd: sells.length ? Math.max(...sells.map(t => Number(t.pnlUsd || 0))) : 0, worstTradeUsd: sells.length ? Math.min(...sells.map(t => Number(t.pnlUsd || 0))) : 0 } });
+    const id = sessionId(req);
+    const [trades, history] = await Promise.all([getTrades(id), getEquityHistory(id, 500)]);
+    res.json({ ok: true, statistics: calculateStatistics(trades, history.reverse()) });
   } catch (error) { errorResponse(res, error); }
 });
 

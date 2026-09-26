@@ -58,7 +58,7 @@ function quantity(value) { const n = number(value); return n === null ? '—' : 
 function percent(value) { const n = number(value); return n === null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`; }
 function signedMoney(value) { const n = number(value); return n === null ? '—' : `${n >= 0 ? '+' : '-'}${money(Math.abs(n))}`; }
 function tone(value) { const n = number(value); return n === null || n === 0 ? '' : n > 0 ? 'positive' : 'negative'; }
-function chainName(chain) { return ({ solana: 'Solana', ethereum: 'Ethereum', base: 'Base', bsc: 'BNB Chain', arbitrum: 'Arbitrum', polygon: 'Polygon', avalanche: 'Avalanche', robinhood: 'Robinhood Chain' })[chain] || chain || 'Unknown'; }
+function chainName(chain) { return ({ solana: 'Solana', ethereum: 'Ethereum', base: 'Base', bsc: 'BNB Chain', arbitrum: 'Arbitrum', polygon: 'Polygon', avalanche: 'Avalanche', optimism: 'Optimism', sui: 'Sui', aptos: 'Aptos', ton: 'TON', tron: 'Tron', pulsechain: 'PulseChain', linea: 'Linea', blast: 'Blast', zksync: 'zkSync', mantle: 'Mantle', fantom: 'Fantom', celo: 'Celo', cronos: 'Cronos', robinhood: 'Robinhood Chain' })[chain] || String(chain || 'Unknown').replaceAll('-', ' ').replace(/\b\w/g, letter => letter.toUpperCase()); }
 function relativeTime(value) { const ms = typeof value === 'number' ? value : Date.parse(value); if (!Number.isFinite(ms)) return '—'; const seconds = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
 function dateTime(value) { const ms = Date.parse(value); return Number.isFinite(ms) ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'; }
 function show(id) { $(id)?.classList.remove('hidden'); }
@@ -337,6 +337,34 @@ function reviewBuy() {
   }, 'Confirm buy');
 }
 
+function positionSizeCalculator() {
+  const entry = number(state.token?.priceUsd);
+  if (!state.token || entry === null || entry <= 0) return toast('Select a token with a live price first.', true);
+  const equity = Math.max(0, Number(state.wallet.equityUsd || 0));
+  openModal('Position size calculator', `<div class="calculator-summary"><span>Account equity</span><strong>${money(equity)}</strong></div><div class="exit-grid"><label><span class="form-label">Risk per trade</span><div class="input-suffix"><input id="calcRisk" class="modal-input" type="number" min="0.1" max="100" step="0.1" value="1"><span>%</span></div></label><label><span class="form-label">Stop-loss price</span><input id="calcStop" class="modal-input" type="number" min="0" step="any" placeholder="Below ${price(entry)}"></label></div><div id="calcResult" class="calculator-result"><span>Enter a stop below the current price.</span></div><p class="trade-note">Size is capped at available cash. Fees are included during order review.</p>`, async () => {
+    const amount = Number($('calcResult').dataset.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a valid risk and stop-loss price.');
+    $('amountInput').value = amount.toFixed(2);
+    toast(`${money(amount)} position size applied.`);
+  }, 'Use this size');
+  const update = () => {
+    const riskPct = Number($('calcRisk').value), stop = Number($('calcStop').value);
+    const result = $('calcResult'), distancePct = entry > 0 ? (entry - stop) / entry * 100 : 0;
+    if (!(riskPct > 0 && riskPct <= 100) || !(stop > 0 && stop < entry)) {
+      result.dataset.amount = '';
+      result.innerHTML = '<span>Stop must be below the live entry price.</span>';
+      return;
+    }
+    const riskUsd = equity * riskPct / 100;
+    const available = Math.max(0, Number(state.wallet.cashUsd || 0) / (1 + state.feePct / 100));
+    const size = Math.min(riskUsd / (distancePct / 100), available);
+    result.dataset.amount = String(size);
+    result.innerHTML = `<div><span>Position size</span><strong>${money(size)}</strong></div><div><span>Capital at risk</span><strong>${money(Math.min(riskUsd, size * distancePct / 100))}</strong></div><div><span>Stop distance</span><strong>${distancePct.toFixed(2)}%</strong></div><div><span>Token quantity</span><strong>${quantity(size / entry)}</strong></div>`;
+  };
+  $('calcRisk').addEventListener('input', update);
+  $('calcStop').addEventListener('input', update);
+}
+
 function reviewSell(position) {
   const owned = Number(position.quantity); const market = Number(position.currentPriceUsd); let chosen = owned;
   if (!Number.isFinite(owned) || owned <= 0 || !Number.isFinite(market) || market <= 0) return toast('A live position price is required to sell.', true);
@@ -374,6 +402,7 @@ function bindEvents() {
   $('withdrawBtn').addEventListener('click', () => reviewBalance('withdraw'));
   $('resetBtn').addEventListener('click', reviewReset);
   $('buyBtn').addEventListener('click', reviewBuy);
+  $('positionSizeBtn').addEventListener('click', positionSizeCalculator);
   $('copyAddressBtn').addEventListener('click', copyAddress);
   document.querySelectorAll('[data-close-modal]').forEach((button) => button.addEventListener('click', closeModal));
   $('modalCancel').addEventListener('click', closeModal); $('modalConfirm').addEventListener('click', confirmModal);
@@ -419,7 +448,7 @@ function authDialog(){
 }
 function passwordRecoveryDialog(){openModal('Reset password','<label class="form-label">Account email</label><input id="recoveryEmail" class="modal-input" type="email" autocomplete="email"><p class="trade-note">We will send a secure password-reset link to this email.</p>',async()=>{const email=$('recoveryEmail').value.trim();if(!email)throw new Error('Enter your account email.');await api('/api/auth/recover',{method:'POST',body:JSON.stringify({email})});toast('Password-reset email sent.');},'Send reset link');}
 function newPasswordDialog(){openModal('Choose a new password','<label class="form-label">New password</label><input id="newPassword" class="modal-input" type="password" minlength="8" autocomplete="new-password"><p class="trade-note">Use at least 8 characters.</p>',async()=>{const password=$('newPassword').value;if(password.length<8)throw new Error('Password must contain at least 8 characters.');await api('/api/auth/update-password',{method:'POST',body:JSON.stringify({password})});toast('Password updated.');},'Update password');}
-async function loadStats(){try{const {statistics:s}=await api('/api/statistics');$('statistics').innerHTML=`<div><span>Win rate</span><strong>${Number(s.winRate).toFixed(1)}%</strong></div><div><span>Closed trades</span><strong>${s.closedTrades}</strong></div><div><span>Total P&amp;L</span><strong class="${tone(s.totalPnlUsd)}">${signedMoney(s.totalPnlUsd)}</strong></div><div><span>Total fees</span><strong>${money(s.totalFeesUsd)}</strong></div>`;}catch(_) {}}
+async function loadStats(){try{const {statistics:s}=await api('/api/statistics');const profitFactor=s.profitFactor===null?'∞':Number(s.profitFactor).toFixed(2);$('statistics').innerHTML=`<div><span>Win rate</span><strong>${Number(s.winRate).toFixed(1)}%</strong></div><div><span>Profit factor</span><strong>${profitFactor}</strong></div><div><span>Net realized</span><strong class="${tone(s.totalPnlUsd)}">${signedMoney(s.totalPnlUsd)}</strong></div><div><span>Expectancy / exit</span><strong class="${tone(s.expectancyUsd)}">${signedMoney(s.expectancyUsd)}</strong></div><div><span>Average win</span><strong class="positive">${signedMoney(s.averageWinUsd)}</strong></div><div><span>Average loss</span><strong class="negative">${signedMoney(s.averageLossUsd)}</strong></div><div><span>Max drawdown</span><strong class="negative">${Number(s.maxDrawdownPct).toFixed(2)}%</strong></div><div><span>Portfolio return</span><strong class="${tone(s.returnPct)}">${percent(s.returnPct)}</strong></div><div><span>Best / worst</span><strong>${signedMoney(s.bestTradeUsd)} / ${signedMoney(s.worstTradeUsd)}</strong></div><div><span>Trades / fees</span><strong>${s.closedTrades} / ${money(s.totalFeesUsd)}</strong></div>`;const grade=s.closedTrades<5?'Building data':Number(s.profitFactor)>=2&&Number(s.winRate)>=50?'Strong edge':Number(s.profitFactor)>1?'Positive edge':'Needs work';$('performanceGrade').textContent=grade;$('performanceGrade').className=`grade-pill ${grade==='Strong edge'?'positive-grade':grade==='Needs work'?'negative-grade':''}`;}catch(_) {}}
 async function loadHistory(){try{const {history=[]}=await api('/api/equity-history');const svg=$('equityChart');if(history.length<2){svg.innerHTML='<text x="300" y="80" text-anchor="middle" fill="#647084" font-size="14">History appears as your portfolio updates</text>';return;}const values=history.map(x=>Number(x.equityUsd));const min=Math.min(...values),max=Math.max(...values),range=max-min||1;const pts=values.map((v,i)=>`${i/(values.length-1)*600},${150-(v-min)/range*135}`).join(' ');svg.innerHTML=`<polyline class="chart-line" points="${pts}"/>`;}catch(_) {}}
 async function loadTrending(){try{const {tokens=[]}=await api('/api/trending');const list=$('trendingList');list.replaceChildren();tokens.forEach(t=>{const b=document.createElement('button');b.className='result-item';b.innerHTML=`<span class="result-token"><strong>${t.symbol} · ${chainName(t.chain)}</strong><span>${t.name}</span></span><span class="result-meta">${price(t.priceUsd)}</span>`;b.onclick=()=>selectToken(t);list.appendChild(b);});}catch(error){toast(error.message,true);}}
 async function addWatch(){await api('/api/watchlist',{method:'POST',body:JSON.stringify(state.token)});toast('Added to watchlist.');}

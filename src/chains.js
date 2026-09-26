@@ -81,6 +81,12 @@ const CHAINS = {
 
 const EVM_RE = /^0x[a-fA-F0-9]{40}$/;
 const SOL_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const CHAIN_ID_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+// Covers contract/mint formats returned by DEX market-data providers, including
+// EVM, Solana, Sui, Aptos, TON, Tron, Cosmos and Cardano-style identifiers.
+// A matching shape is not treated as proof that a token exists: every order is
+// still resolved against a provider and requires a fresh positive USD price.
+const PROVIDER_ADDRESS_RE = /^[a-zA-Z0-9:_-]{20,160}$/;
 
 function isValidAddress(address) {
   if (!address) return [];
@@ -99,7 +105,19 @@ function isValidAddress(address) {
   return [];
 }
 
+function isValidMarketToken(chain, address) {
+  const cleanChain = String(chain || '').trim().toLowerCase();
+  const cleanAddress = String(address || '').trim();
+  return CHAIN_ID_RE.test(cleanChain) && PROVIDER_ADDRESS_RE.test(cleanAddress);
+}
+
+function isResolvableAddress(address) {
+  return PROVIDER_ADDRESS_RE.test(String(address || '').trim());
+}
+
 module.exports = {
   CHAINS,
-  isValidAddress
+  isValidAddress,
+  isValidMarketToken,
+  isResolvableAddress
 };

@@ -81,6 +81,24 @@ test('DexPaprika supplies a batched fallback when DexScreener is limited', async
   } finally { global.fetch = originalFetch; }
 });
 
+test('DefiLlama supplies a free batched price fallback', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async url => {
+    const value = String(url);
+    if (value.includes('dexscreener') || value.includes('dexpaprika')) return { ok: false, status: 429, json: async () => ({}) };
+    if (value.includes('coins.llama.fi')) return { ok: true, json: async () => ({ coins: { 'base:0x1111111111111111111111111111111111111111': { price: 0.75, symbol: 'MEME', timestamp: 1770000000, confidence: .96 } } }) };
+    return { ok: false, status: 500, json: async () => ({}) };
+  };
+  for (const module of ['../src/providers', '../src/providers/dexscreener', '../src/providers/dexpaprika', '../src/providers/defillama']) delete require.cache[require.resolve(module)];
+  const provider = require('../src/providers');
+  try {
+    const [price] = await provider.getPrices([{ chain: 'base', address: '0x1111111111111111111111111111111111111111' }]);
+    assert.equal(price.priceUsd, 0.75);
+    assert.equal(price.source, 'defillama');
+    assert.equal(provider.getProviderStatus().providers.find(item => item.name === 'DefiLlama').status, 'healthy');
+  } finally { global.fetch = originalFetch; }
+});
+
 test('search seeds the price cache for immediate trade confirmation', async () => {
   const originalFetch = global.fetch;
   let requests = 0;

@@ -9,8 +9,8 @@ PaperTrade never connects to a wallet, stores private keys, sends blockchain tra
 ## Features
 
 - Search by token name, symbol, EVM contract, or Solana mint
-- Ethereum, Base, BNB Chain, Arbitrum, Polygon, Avalanche, and Solana support
-- DexScreener market data with DexPaprika and GeckoTerminal fallbacks
+- Provider-discovered memecoin markets across EVM and non-EVM chains, including Solana, Sui, Aptos, TON, Tron, Ethereum, Base, BNB Chain, Arbitrum, Polygon, Avalanche, Optimism, and more
+- DexScreener market data with batched DexPaprika, DefiLlama, and GeckoTerminal fallbacks
 - Shared 15-second price cache and cross-user request batching to reduce upstream API usage
 - Live position valuation and USD-to-SOL portfolio conversion
 - Simulated fees and slippage
@@ -25,6 +25,8 @@ PaperTrade never connects to a wallet, stores private keys, sends blockchain tra
 - Average entry, estimated break-even, allocation, and price-source details
 - Server-enforced maximum position size and daily realized-loss limits
 - Live provider-health display for the free market-data fallback stack
+- Risk-based position-size calculator with cash caps
+- Advanced analytics: profit factor, expectancy, drawdown, payoff ratio, return, and streaks
 
 ## Run locally
 
