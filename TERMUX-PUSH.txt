@@ -1,0 +1,32 @@
+PaperTrade live-price upgrade
+Commit: a72b7e5
+
+This ZIP contains the complete repository source. Use these commands in Termux:
+
+pkg install git unzip -y
+cd ~
+rm -rf papertrade-push papertrade-upgrade
+git clone https://github.com/cchughiefe-art/papertrade.git papertrade-push
+mkdir papertrade-upgrade
+unzip -o ~/storage/downloads/PaperTrade-a72b7e5-Termux.zip -d ~/papertrade-upgrade
+cp -a ~/papertrade-upgrade/PaperTrade-a72b7e5/. ~/papertrade-push/
+cd ~/papertrade-push
+
+git config user.name "Courage Chughiefe"
+git config user.email "cchughiefe@gmail.com"
+git add .
+git commit -m "Improve live pricing resilience and trade simulation"
+git push -u origin main
+
+If GitHub rejects the email for privacy, run:
+
+git config user.email "YOUR_GITHUB_NOREPLY_EMAIL"
+git commit --amend --reset-author --no-edit
+git push -u origin main
+
+Verification before pushing:
+
+npm ci
+npm test
+
+Expected result: 14 tests pass.

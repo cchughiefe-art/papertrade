@@ -810,6 +810,38 @@ app.get(
   }
 );
 
+/* A single valuation pass keeps the panel consistent and avoids requesting
+ * every open-token price once for the wallet and again for the positions. */
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const id = sessionId(req);
+    const valuation = await liveValuation(id);
+    let solPriceUsd = null;
+    try { solPriceUsd = await getSolPrice(); } catch (_) {}
+    const wallet = await walletSummary(id, solPriceUsd, valuation);
+    await recordEquity(id, wallet).catch(() => {});
+    const positions = valuation.enriched.map(item => ({
+      ...item.position,
+      currentPriceUsd: item.currentPriceUsd,
+      currentValueUsd: item.currentValueUsd,
+      unrealizedPnlUsd: item.unrealizedPnlUsd,
+      unrealizedPnlPct: item.unrealizedPnlPct,
+      marketCapUsd: item.price?.marketCapUsd ?? null,
+      liquidityUsd: item.price?.liquidityUsd ?? null,
+      volume24hUsd: item.price?.volume24hUsd ?? null,
+      priceUpdatedAt: item.price?.updatedAt ?? null,
+      priceSource: item.price?.source ?? null,
+      source: item.price?.source ?? null,
+      stale: item.price?.stale ?? false,
+      cached: item.price?.cached ?? false,
+      ageSeconds: item.price?.ageSeconds ?? null
+    }));
+    res.json({ ok: true, wallet, positions, providers: getProviderStatus().providers, updatedAt: Date.now() });
+  } catch (error) {
+    errorResponse(res, error);
+  }
+});
+
 /*
  * SINGLE POSITION
  */
@@ -1112,7 +1144,10 @@ app.post(
               CONFIG.slippagePct,
 
             source:
-              token.source
+              token.source,
+
+            liquidityUsd:
+              token.liquidityUsd
           }
         );
 
@@ -1290,7 +1325,10 @@ app.post(
               CONFIG.slippagePct,
 
             source:
-              token.source
+              token.source,
+
+            liquidityUsd:
+              token.liquidityUsd
           }
         );
 
@@ -1520,7 +1558,7 @@ async function processConditionalOrders() {
       if (!claimed.rowCount) continue;
       const position = await getPosition(order.session_id, order.position_id);
       if (!position) throw new Error('Position closed');
-      await sell(order.session_id, order.position_id, { quantity: position.quantity * Number(order.percent_to_sell) / 100, marketPriceUsd: current, feePct: CONFIG.feePct, slippagePct: CONFIG.slippagePct, source: market.source });
+      await sell(order.session_id, order.position_id, { quantity: position.quantity * Number(order.percent_to_sell) / 100, marketPriceUsd: current, feePct: CONFIG.feePct, slippagePct: CONFIG.slippagePct, liquidityUsd: market.liquidityUsd, source: market.source });
       await query(`UPDATE conditional_orders SET status='executed',executed_at=NOW() WHERE id=$1`, [order.id]);
     } catch (error) {
       await query(`UPDATE conditional_orders SET status='failed' WHERE id=$1`, [order.id]).catch(()=>{});

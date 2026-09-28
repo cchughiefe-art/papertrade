@@ -29,10 +29,13 @@ async function fetchJson(url) {
 
 function normalize(pool, network, address) {
   const a = pool?.attributes || {};
+  const target = String(address || '').toLowerCase();
+  const baseId = String(pool?.relationships?.base_token?.data?.id || '').split('_').pop().toLowerCase();
+  const quoteId = String(pool?.relationships?.quote_token?.data?.id || '').split('_').pop().toLowerCase();
+  const quoteMatch = target && quoteId === target && baseId !== target;
 
   const price = Number(
-    a.base_token_price_usd ||
-    a.quote_token_price_usd
+    quoteMatch ? a.quote_token_price_usd : a.base_token_price_usd
   );
 
   if (!Number.isFinite(price) || price <= 0) {

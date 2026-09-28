@@ -2,19 +2,21 @@ const BASE_URL =
   process.env.DEXSCREENER_BASE_URL ||
   'https://api.dexscreener.com';
 
-async function fetchJson(url) {
-  const res = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      'user-agent': 'PaperTrade/1.0'
+async function fetchJson(url, attempt = 0) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json', 'user-agent': 'PaperTrade/1.0' } });
+    if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+      const retryAfter = Math.min(3000, Number(res.headers.get('retry-after') || 0) * 1000 || 350 * (2 ** attempt));
+      await new Promise(resolve => setTimeout(resolve, retryAfter));
+      return fetchJson(url, attempt + 1);
     }
-  });
-
-  if (!res.ok) {
-    throw new Error(`DexScreener HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`DexScreener HTTP ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return res.json();
 }
 
 function normalizePair(pair, address) {
@@ -198,11 +200,8 @@ async function searchTokens(query) {
         quoteMatch ? quote :
         base;
 
-      const price = Number(pair.priceUsd);
-
-      if (!address || !Number.isFinite(price) || price <= 0) {
-        return null;
-      }
+      const normalized = normalizePair(pair, address);
+      if (!address || !normalized) return null;
 
       const key =
         `${pair.chainId || ''}:${address}`.toLowerCase();
@@ -218,7 +217,7 @@ async function searchTokens(query) {
         address,
         name: token.name || 'Unknown Token',
         symbol: token.symbol || 'UNKNOWN',
-        priceUsd: price,
+        priceUsd: normalized.priceUsd,
         marketCapUsd:
           Number(pair.marketCap || pair.fdv || 0) || 0,
         liquidityUsd:
@@ -272,12 +271,12 @@ async function getPrices(tokens) {
     for (let offset = 0; offset < entries.length; offset += 30) {
       const chunk = entries.slice(offset, offset + 30);
       const addresses = [...new Set(chunk.map(item => item.address))];
-      const data = await fetchJson(
-        `${BASE_URL}/tokens/v1/${encodeURIComponent(chain)}/${addresses.map(encodeURIComponent).join(',')}`
-      );
-      chunk.forEach(item => {
-        results[item.index] = choose(data, item.address, chain);
-      });
+      try {
+        const data = await fetchJson(`${BASE_URL}/tokens/v1/${encodeURIComponent(chain)}/${addresses.map(encodeURIComponent).join(',')}`);
+        chunk.forEach(item => { results[item.index] = choose(data, item.address, chain); });
+      } catch (_) {
+        // Keep successful chunks; the orchestrator fills only this failed chunk.
+      }
     }
   }
   return results;

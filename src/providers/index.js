@@ -10,8 +10,8 @@ let pendingTimer = null;
 const providerHealth = new Map(['DexScreener','DexPaprika','DefiLlama','GeckoTerminal','Robinhood'].map(name => [name, { status: 'waiting', lastCheckedAt: null }]));
 function markProvider(name, ok) { providerHealth.set(name, { status: ok ? 'healthy' : 'degraded', lastCheckedAt: new Date().toISOString() }); }
 
-const PRICE_TTL = 15000;
-const STALE_TTL = 120000;
+const PRICE_TTL = Math.max(5000, Number(process.env.PRICE_CACHE_MS) || 10000);
+const STALE_TTL = Math.max(PRICE_TTL, Number(process.env.PRICE_STALE_CACHE_MS) || 15 * 60 * 1000);
 const TOKEN_TTL = 30000;
 const MISS_TTL = 5000;
 
@@ -132,7 +132,7 @@ async function flushPriceQueue() {
     const stale = getStale(k);
     if (isUsablePrice(value) && stale) value = { ...stale, ...value };
     if (isUsablePrice(value)) setCached(k, value, PRICE_TTL);
-    else if (stale) value = { ...stale, stale: true };
+    else if (stale) value = { ...stale, stale: true, cached: true, cacheAgeSeconds: Math.max(0, Math.floor((Date.now() - Number(stale.updatedAt || 0)) / 1000)) };
     else value = null;
     entry.waiters.forEach(resolve => resolve(value));
   });
@@ -197,9 +197,17 @@ async function getSolPrice() {
 async function getTrending() {
   const cached = getCached('trending');
   if (Array.isArray(cached)) return cached;
-  const tokens = await dexscreener.getTrending();
-  setCached('trending', tokens, 60000);
-  return tokens;
+  try {
+    const tokens = await dexscreener.getTrending();
+    setCached('trending', tokens, 60000);
+    markProvider('DexScreener', true);
+    return tokens;
+  } catch (error) {
+    markProvider('DexScreener', false);
+    const stale = getStale('trending');
+    if (Array.isArray(stale)) return stale.map(token => ({ ...token, stale: true, cached: true }));
+    throw error;
+  }
 }
 
 function getProviderStatus() {

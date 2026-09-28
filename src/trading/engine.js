@@ -26,6 +26,12 @@ function roundQuantity(value) {
   return Math.round((n + Number.EPSILON) * 1e12) / 1e12;
 }
 
+function roundPrice(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Number(n.toPrecision(15));
+}
+
 function cleanPct(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0 || n > 100) return fallback;
@@ -54,6 +60,17 @@ function executionPrice(marketPrice, side, slippagePct) {
   return side === 'BUY' ? price * (1 + slippage) : price * (1 - slippage);
 }
 
+function effectiveSlippagePct(basePct, notionalUsd, liquidityUsd) {
+  const base = cleanPct(basePct, DEFAULT_SLIPPAGE_PCT);
+  const notional = Math.max(0, Number(notionalUsd) || 0);
+  const liquidity = Number(liquidityUsd);
+  if (!Number.isFinite(liquidity) || liquidity <= 0) return base;
+  // A small constant-product approximation: crossing a pool becomes more
+  // expensive as the order consumes a larger share of available liquidity.
+  const impactPct = (notional / liquidity) * 50;
+  return Math.min(25, base + impactPct);
+}
+
 function mapPosition(row) {
   if (!row) return null;
   const quantity = Number(row.quantity ?? row.total_quantity ?? 0);
@@ -66,8 +83,8 @@ function mapPosition(row) {
     tokenAddress: row.token_address,
     tokenName: row.token_name,
     symbol: row.symbol,
-    entryPriceUsd: roundMoney(averageEntry),
-    averageEntryPriceUsd: roundMoney(averageEntry),
+    entryPriceUsd: roundPrice(averageEntry),
+    averageEntryPriceUsd: roundPrice(averageEntry),
     quantity: roundQuantity(quantity),
     totalQuantity: roundQuantity(Number(row.total_quantity ?? quantity)),
     investedUsd: roundMoney(Number(row.invested_usd ?? costBasis)),
@@ -195,7 +212,7 @@ async function buy(sessionId, data = {}) {
   }
 
   const feePct = getFeePct(data);
-  const slippagePct = getSlippagePct(data);
+  const slippagePct = effectiveSlippagePct(getSlippagePct(data), amountUsd, data.liquidityUsd);
   const execution = executionPrice(marketPrice, 'BUY', slippagePct);
   const feeUsd = roundMoney((amountUsd * feePct) / 100);
   const totalCashRequired = roundMoney(amountUsd + feeUsd);
@@ -298,8 +315,8 @@ async function buy(sessionId, data = {}) {
 
   return {
     side: 'BUY',
-    marketPriceUsd: roundMoney(marketPrice),
-    executionPriceUsd: roundMoney(execution),
+    marketPriceUsd: roundPrice(marketPrice),
+    executionPriceUsd: roundPrice(execution),
     slippagePct,
     amountUsd: roundMoney(amountUsd),
     feeUsd,
@@ -337,7 +354,8 @@ async function sell(sessionId, positionId, priceOrData, maybeData) {
   quantity = Math.min(quantity, position.quantity);
 
   const feePct = getFeePct(data);
-  const slippagePct = getSlippagePct(data);
+  const estimatedNotional = quantity * marketPrice;
+  const slippagePct = effectiveSlippagePct(getSlippagePct(data), estimatedNotional, data.liquidityUsd);
   const execution = executionPrice(marketPrice, 'SELL', slippagePct);
   const grossProceeds = roundMoney(quantity * execution);
   const feeUsd = roundMoney((grossProceeds * feePct) / 100);
@@ -410,8 +428,8 @@ async function sell(sessionId, positionId, priceOrData, maybeData) {
 
   return {
     side: 'SELL',
-    marketPriceUsd: roundMoney(marketPrice),
-    executionPriceUsd: roundMoney(execution),
+    marketPriceUsd: roundPrice(marketPrice),
+    executionPriceUsd: roundPrice(execution),
     slippagePct,
     quantity: roundQuantity(quantity),
     grossProceeds,

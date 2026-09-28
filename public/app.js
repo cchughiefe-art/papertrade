@@ -1,8 +1,8 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const POLL_MS = 30000;
-const state = { token: null, positions: [], wallet: {}, installPrompt: null, busy: false, feePct: 0.25, slippagePct: 0.5, lowLiquidityUsd: 10000, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
+const POLL_MS = 10000;
+const state = { token: null, positions: [], wallet: {}, refreshing: false, installPrompt: null, busy: false, feePct: 0.25, slippagePct: 0.5, lowLiquidityUsd: 10000, portfolio: localStorage.getItem('pt_portfolio') || 'default', accessToken: localStorage.getItem('pt_access_token') || '', refreshToken: localStorage.getItem('pt_refresh_token') || '', expiresAt: Number(localStorage.getItem('pt_expires_at') || 0), authRefresh: null };
 let toastTimer;
 let modalAction = null;
 let sessionId = localStorage.getItem('pt_session');
@@ -234,6 +234,34 @@ async function refreshPositions() {
   renderPositions();
 }
 
+function renderProviderStatus(providers = []) {
+  $('providerStatus')?.replaceChildren(...providers.map(provider => { const el=document.createElement('span'); el.className=`provider ${provider.status}`; el.innerHTML='<i></i>'; el.append(document.createTextNode(provider.name)); return el; }));
+  const degraded = providers.some(provider => provider.status === 'degraded');
+  $('marketStatus')?.classList.toggle('degraded', degraded);
+  const label = $('marketStatus')?.querySelector('span:last-child');
+  if (label) label.textContent = degraded ? 'Live · fallback active' : 'Market live';
+}
+
+async function refreshDashboard() {
+  if (state.refreshing) return;
+  state.refreshing = true;
+  try {
+    const data = await api('/api/dashboard');
+    state.wallet = data.wallet || {};
+    state.positions = data.positions || [];
+    $('positionCount').textContent = String(state.positions.length);
+    $('wCash').textContent = money(state.wallet.cashUsd);
+    $('wPositions').textContent = money(state.wallet.positionValueUsd);
+    $('wEquity').textContent = money(state.wallet.equityUsd);
+    setPnl('wRealized', state.wallet.realizedPnlUsd);
+    setPnl('wUnrealized', state.wallet.unrealizedPnlUsd);
+    $('solValue').textContent = number(state.wallet.equitySol) === null ? 'SOL price unavailable' : `${Number(state.wallet.equitySol).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })} SOL · 1 SOL = ${price(state.wallet.solPriceUsd)}`;
+    $('lastSync').textContent = `Updated ${relativeTime(data.updatedAt)}`;
+    renderPositions();
+    renderProviderStatus(data.providers || []);
+  } finally { state.refreshing = false; }
+}
+
 function renderPositions() {
   const query = String($('positionFilter')?.value || '').trim().toLowerCase();
   const sort = $('positionSort')?.value || 'pnl';
@@ -290,7 +318,7 @@ async function riskControls(){try{const {settings={}}=await api('/api/risk-setti
 async function loadProviderStatus() {
   try {
     const { providers = [] } = await api('/api/providers/status');
-    $('providerStatus').replaceChildren(...providers.map(provider => { const el=document.createElement('span'); el.className=`provider ${provider.status}`; el.innerHTML='<i></i>'; el.append(document.createTextNode(provider.name)); return el; }));
+    renderProviderStatus(providers);
   } catch (_) {}
 }
 
@@ -307,7 +335,7 @@ async function refreshTrades() {
 }
 
 async function refreshAll({ quiet = false } = {}) {
-  const tasks = [refreshWallet(), refreshPositions(), refreshTrades()];
+  const tasks = [refreshDashboard(), refreshTrades()];
   const results = await Promise.allSettled(tasks);
   const failed = results.find((result) => result.status === 'rejected');
   if (failed) { $('marketStatus').classList.add('offline'); if (!quiet) toast(failed.reason?.message || 'Unable to refresh account.', true); }
@@ -471,7 +499,13 @@ async function init() {
   await refreshAll();
   await refreshV2();
   await loadTrending();
-  setInterval(async () => { await Promise.allSettled([refreshCurrentToken(), refreshAll({ quiet: true })]); }, POLL_MS);
+  setInterval(async () => {
+    if (document.visibilityState !== 'visible' || navigator.onLine === false) return;
+    await Promise.allSettled([refreshCurrentToken(), refreshAll({ quiet: true })]);
+  }, POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && navigator.onLine !== false) refreshAll({ quiet: true });
+  });
 }
 
 init().catch((error) => toast(error.message || 'PaperTrade could not start.', true));
